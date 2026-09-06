@@ -21,10 +21,10 @@ async function fixture(t, send) {
   t.after(() => transport.close())
   return { dir, backend, journal, transport, calls, interrupts }
 }
-function request(transport, { session = "ses_a", message = "msg_a", prompt = "こんにちは", messages, stream = false, model = "chat", agent = "notion", signal } = {}) {
+function request(transport, { session = "ses_a", message = "msg_a", prompt = "こんにちは", messages, stream = false, model = "chat", reasoningEffort, agent = "notion", signal } = {}) {
   return transport.fetch("https://opencode-notion.invalid/v1/chat/completions", { method: "POST",
     headers: { "content-type": "application/json", [SESSION_HEADER]: session, [MESSAGE_HEADER]: message, [AGENT_HEADER]: agent }, signal,
-    body: JSON.stringify({ model, stream, messages: messages ?? [{ role: "user", content: prompt }] }) })
+    body: JSON.stringify({ model, stream, ...(reasoningEffort ? { reasoningEffort } : {}), messages: messages ?? [{ role: "user", content: prompt }] }) })
 }
 const answer = async response => (await response.json()).choices?.[0]?.message?.content
 
@@ -34,7 +34,7 @@ test("standard provider hooks retain UI and isolate execution", async t => {
   assert.equal(config.provider.existing.name, "Keep"); assert.equal(config.model, "notion-ai/chat"); assert.equal(config.default_agent, "notion")
   assert.equal(config.small_model, "notion-ai/metadata"); assert.equal(config.compaction.auto, false)
   assert.equal(config.provider["notion-ai"].options.fetch, f.transport.fetch)
-  assert.equal(config.provider["notion-ai"].models.chat.tool_call, false); assert.equal(config.agent.notion.tools["*"], false)
+  assert.equal(config.provider["notion-ai"].models.chat.tool_call, false); assert.equal(config.provider["notion-ai"].models.chat.attachment, true); assert.equal(config.agent.notion.tools["*"], false)
   assert.ok(!JSON.stringify(config).includes("token_v2"))
   const output = { headers: {} }
   await hooks["chat.headers"]({ model: { providerID: "notion-ai" }, sessionID: "ses_1", agent: "notion", message: { id: "msg_1" } }, output)
@@ -82,7 +82,16 @@ test("stream cancellation interrupts Notion and prevents replay", async t => {
   await reader.read(); await delay(20); await reader.cancel(); await f.transport.close()
   assert.equal(f.interrupts.length, 1); assert.equal(f.journal.data.sessions.ses_a.turns.msg_a.status, "interrupted")
 })
-test("pre-aborted requests, bad IDs, attachments and endpoints do not send", async t => {
+test("inline files and model effort are forwarded to Notion", async t => {
+  const f = await fixture(t), png = Buffer.from("png-bytes").toString("base64")
+  const response = await request(f.transport, { model: "gpt-5.2", reasoningEffort: "high", messages: [{ role: "user", content: [
+    { type: "text", text: "画像を確認" }, { type: "image_url", image_url: { url: `data:image/png;base64,${png}`, filename: "screen.png" } }
+  ] }] })
+  assert.equal(response.status, 200); assert.equal(f.calls.length, 1)
+  assert.equal(f.calls[0].prompt, "execution context\n\n画像を確認"); assert.equal(f.calls[0].reasoningEffort, "high")
+  assert.deepEqual(f.calls[0].attachments, [{ base64: png, fileName: "screen.png", mimeType: "image/png" }])
+})
+test("pre-aborted requests, bad IDs, remote attachments and endpoints do not send", async t => {
   const f = await fixture(t); await request(f.transport, { signal: AbortSignal.abort() }); await request(f.transport, { session: "__proto__" })
   await request(f.transport, { messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "https://example.com/a.png" } }] }] })
   assert.equal((await f.transport.fetch("https://opencode-notion.invalid/other")).status, 404); assert.equal(f.calls.length, 0)

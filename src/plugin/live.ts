@@ -120,25 +120,27 @@ export class OpenCodeDisplay implements LiveDisplay {
           // Our namespace is separate from processor-owned text/tool parts.
           const id = partID()
           part = { id, messageID: target.id, sessionID, type: "tool", callID: `notion-display-${job.job_id}`,
-            tool: `opencode_mcp.${this.redact(job.tool)}`,
+            // Exact native names and state shapes select OpenCode's built-in
+            // bash/read/edit/etc. renderers instead of the generic MCP card.
+            tool: this.redact(job.tool),
             // providerExecuted is honored by the pinned prompt loop: without it,
             // even finish=stop would trigger another local model step.
             metadata: { providerExecuted: true, notionDisplay: { displayOnly: true, source: "execution-mcp" } },
             state: { status: "running", input: displayValue(event.input ?? {}, this.redact) as Record<string, unknown>, time: { start: Date.parse(job.created_at) || Date.now() } } }
           cards.set(job.job_id, part)
         }
-        const { __display_status: _status, ...argumentsOnly } = part.state.input
-        const input = { __display_status: job.status, ...argumentsOnly }
+        const input = part.state.input
         const start = part.state.status === "pending" ? Date.now() : part.state.time.start
         const progressRedact = (text: string) => this.redact.stream?.(text, false) ?? this.redact(text)
         const title = displayText(job.result?.title ?? job.progress?.title ?? job.tool, job.result ? this.redact : progressRedact)
-        const metadata = { notionDisplayOnly: true, executionStatus: job.status,
-          ...(job.progress ? { progress: displayValue(job.progress, progressRedact) } : {}) }
+        const rawMetadata = job.result?.metadata ?? job.progress?.metadata ?? job.permission?.metadata ?? {}
+        const metadata = { ...(displayValue(rawMetadata, job.result ? this.redact : progressRedact) as Record<string, unknown>),
+          notionDisplayOnly: true, executionStatus: job.status }
         if (job.status === "completed") part.state = { status: "completed", input, title, metadata,
           output: displayText(job.result?.output ?? "", this.redact), time: { start, end: Date.parse(job.updated_at) || Date.now() } }
         else if (job.status === "failed" || job.status === "cancelled") part.state = { status: "error", input, metadata,
           error: displayText(job.error ?? job.status, this.redact), time: { start, end: Date.parse(job.updated_at) || Date.now() } }
-        else part.state = { status: "running", input, title: `${title} (${job.status})`, metadata, time: { start } }
+        else part.state = { status: "running", input, title, metadata, time: { start } }
         put(part, event.type === "start")
         if (["completed", "failed", "cancelled"].includes(job.status)) cards.delete(job.job_id)
       },

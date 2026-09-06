@@ -138,14 +138,16 @@ function displayFixture() {
 }
 function execution(type,status,id="job_one",input={command:"echo COOKIE_SECRET",password:"do-not-show"}) {
   return {type,input,job:{job_id:id,tool:"bash",status,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),
-    ...(status==="completed"?{result:{title:"Done",output:"MCP_SECRET result",metadata:{}}}:{}),...(status==="failed"?{error:"COOKIE_SECRET failed"}:{})}}
+    ...(status==="completed"?{result:{title:"Done",output:"MCP_SECRET result",metadata:{diff:"safe diff",matches:2}}}:{}),...(status==="failed"?{error:"COOKIE_SECRET failed"}:{})}}
 }
 test("SDK display-only cards use verified assistant identity, safe arguments/results and actual states",async()=>{
   const f=displayFixture(), turn=await f.display.begin("ses_s","msg_u")
   turn.update(execution("start","running"));await turn.flush();turn.update(execution("update","completed"));await turn.flush()
   assert.deepEqual(f.writes.map(x=>x.body.state.status),["running","completed"])
   assert.equal(f.writes[0].body.id,f.writes[1].body.id);assert.equal(f.writes[0].body.messageID,"msg_a");assert.equal(f.writes[0].body.sessionID,"ses_s")
-  assert.equal(f.writes[1].body.tool,"opencode_mcp.bash");assert.equal(f.writes[1].body.state.output,"[redacted] result")
+  assert.equal(f.writes[1].body.tool,"bash");assert.equal(f.writes[1].body.state.output,"[redacted] result")
+  assert.deepEqual(f.writes[1].body.state.metadata,{diff:"safe diff",matches:2,notionDisplayOnly:true,executionStatus:"completed"})
+  assert.equal("__display_status" in f.writes[1].body.state.input,false);assert.equal(f.writes[1].body.state.input.password,"[redacted]")
   assert.equal(f.writes[0].body.metadata.notionDisplay.displayOnly,true);assert.doesNotMatch(JSON.stringify(f.writes),/COOKIE_SECRET|MCP_SECRET|do-not-show/)
   assert.ok(f.writes.every(x=>x.url==="/session/{sessionID}/message/{messageID}/part/{partID}"));await f.display.close()
 })
@@ -216,7 +218,8 @@ test("rapid native progress is coalesced while preserving the first running and 
   await eventually(()=>started,"first card not started")
   for(let i=0;i<1000;i++)turn.update({...execution("update","running"),job:{...execution("update","running").job,progress:{title:"progress "+i}}})
   turn.update(execution("update","completed"));release();await turn.flush()
-  assert.equal(f.writes.length,2);assert.equal(f.writes[0].body.state.input.__display_status,"running");assert.equal(f.writes[1].body.state.input.__display_status,"completed")
+  assert.equal(f.writes.length,2);assert.deepEqual(f.writes.map(x=>x.body.state.status),["running","completed"])
+  assert.deepEqual(f.writes.map(x=>x.body.state.metadata.executionStatus),["running","completed"])
   assert.equal(f.writes[1].body.metadata.providerExecuted,true)
 })
 
@@ -235,14 +238,14 @@ test("late job completion stays on its original assistant after a new turn start
 test("awaiting approval, cancelling and cancelled show exact native display statuses",async()=>{
   const f=displayFixture(),turn=await f.display.begin("ses_s","msg_u")
   for(const status of ["running","awaiting_permission","cancelling","cancelled"]){turn.update(execution(status==="running"?"start":"update",status));await turn.flush()}
-  assert.deepEqual(f.writes.map(x=>x.body.state.input.__display_status),["running","awaiting_permission","cancelling","cancelled"])
+  assert.deepEqual(f.writes.map(x=>x.body.state.metadata.executionStatus),["running","awaiting_permission","cancelling","cancelled"])
   assert.equal(f.writes.at(-1).body.state.status,"error");assert.equal(f.writes.at(-1).body.state.error,"cancelled")
 })
 
 test("own persisted cards are excluded from model histories without changing stock UI records",async()=>{
   const {attachLiveUI}=await import("../dist/plugin/live.js"),f=displayFixture();let composed=0
   const config=()=>{},hooks=attachLiveUI({client:f.client,directory:"/workspace"},{redactDisplay:s=>s},{config,"experimental.chat.messages.transform":async()=>{composed++}})
-  const own={type:"tool",tool:"opencode_mcp.bash",callID:"notion-display-test",metadata:{providerExecuted:true,notionDisplay:{displayOnly:true}}}
+  const own={type:"tool",tool:"bash",callID:"notion-display-test",metadata:{providerExecuted:true,notionDisplay:{displayOnly:true}}}
   const ordinary={type:"tool",tool:"bash",callID:"ordinary"},plain={type:"text",text:"answer"}
   const messages=[{info:{role:"assistant",providerID:"notion-ai"},parts:[own,ordinary,plain]},{info:{role:"assistant",providerID:"other"},parts:[ordinary]}],output={messages}
   await hooks["experimental.chat.messages.transform"]({},output)

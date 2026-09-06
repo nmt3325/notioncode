@@ -51,11 +51,15 @@ export class NotionModels {
   definitions() {
     // No universal Notion context/output capacity has been verified.
     const limits = { context: UNKNOWN_NOTION_CONTEXT, output: 0 }
-    const chat = (name: string) => ({ name, tool_call: false, attachment: false, reasoning: false, limit: { ...limits } })
+    const chat = (name: string, notionModel?: string) => {
+      const efforts = notionModel ? modelReasoningEfforts(notionModel) : undefined
+      return { name, tool_call: false, attachment: true, reasoning: Boolean(efforts), limit: { ...limits },
+        ...(efforts ? { variants: Object.fromEntries(efforts.supported.map(effort => [effort, { reasoningEffort: effort }])) } : {}) }
+    }
     return {
-      [CHAT_MODEL]: chat(`Notion AI · Configured default (${this.defaultName})`),
-      ...Object.fromEntries(this.choices.map(entry => [entry.id, chat(entry.name + (entry.pickable ? "" : " [Notion picker: unlisted]"))])),
-      [META_MODEL]: chat("Notion local metadata (not a chat model)"),
+      [CHAT_MODEL]: chat(`Notion AI · Configured default (${this.defaultName})`, this.defaultModel),
+      ...Object.fromEntries(this.choices.map(entry => [entry.id, chat(entry.name + (entry.pickable ? "" : " [Notion picker: unlisted]"), entry.notionModel)])),
+      [META_MODEL]: { ...chat("Notion local metadata (not a chat model)"), attachment: false, reasoning: false },
     }
   }
 }

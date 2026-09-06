@@ -98,7 +98,7 @@ export default {id:'notion-live-host-fixture',server:async input=>{
     assert.deepEqual(done.tokens,{total:input+output+read+40,input,output,reasoning:0,cache:{read,write:40}});assert.equal(done.cost,0);
   }
   assert.equal(new Set(tools.map(x=>x.part.messageID)).size,2)
-  for(const {part} of tools){assert.ok(assistantIDs.has(part.messageID));assert.ok(!userIDs.has(part.messageID));assert.equal(part.sessionID,session);assert.equal(part.metadata.notionDisplay.displayOnly,true);assert.equal(part.metadata.providerExecuted,true);assert.ok(part.state.input.__display_status)}
+  for(const {part} of tools){assert.ok(assistantIDs.has(part.messageID));assert.ok(!userIDs.has(part.messageID));assert.equal(part.sessionID,session);assert.equal(part.metadata.notionDisplay.displayOnly,true);assert.equal(part.metadata.providerExecuted,true);assert.equal(part.tool,"bash");assert.ok(part.state.metadata.executionStatus);assert.equal("__display_status" in part.state.input,false)}
   const texts=parts.filter(x=>x.part.type==="text"&&x.part.time?.end).map(x=>x.part.text)
   assert.deepEqual(texts,["LIVE_PROGRESS\n\nLIVE_FINAL [redacted] [redacted]","LIVE_REVISED_FINAL [redacted] [redacted]"])
   assert.equal(await readFile(join(workspace,"execution-count"),"utf8"),"xx","no duplicate native execution or local tool loop")

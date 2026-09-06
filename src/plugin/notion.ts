@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { NotionClient } from "../vendor/notion-ai/notion-client.js"
 import type { NotionConfig } from "../vendor/notion-ai/config.js"
 import type { Settings } from "./config.js"
-export interface ChatInput { prompt: string; conversationId: string; fresh: boolean; signal: AbortSignal; model?: string; reasoningEffort?: string; onText?: (snapshot: string) => void; onUsage?: (usage: NotionUsage) => void }
+export interface ChatInput { prompt: string; attachments?: Array<{ base64: string; fileName: string; mimeType: string }>; conversationId: string; fresh: boolean; signal: AbortSignal; model?: string; reasoningEffort?: string; onText?: (snapshot: string) => void; onUsage?: (usage: NotionUsage) => void }
 export interface ChatBackend { send(input: ChatInput): Promise<string>; interrupt(conversationId: string): Promise<void> }
 export function notionConfig(s: Settings, stateDir?: string): NotionConfig {
   return {
@@ -31,11 +31,18 @@ export class NotionBackend implements ChatBackend {
   async send(input: ChatInput): Promise<string> {
     input.signal.throwIfAborted()
     return this.signal.run(input.signal, async () => {
+      const fileIds: string[] = []
+      for (const [index, attachment] of (input.attachments ?? []).entries()) {
+        const uploaded = await this.client.uploadAttachment({ ...attachment, transport: "inference_transcript", processForInference: true,
+          ...(index === 0 && input.fresh ? { newConversationId: input.conversationId } : { conversationId: input.conversationId }) })
+        fileIds.push(uploaded.fileId)
+      }
       const result = await this.client.chat({ prompt: input.prompt, readOnly: false,
+        ...(fileIds.length ? { fileIds } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
         ...(input.onText ? { onText: input.onText } : {}),
-        ...(input.fresh ? { newConversationId: input.conversationId } : { conversationId: input.conversationId }) })
+        ...(input.fresh && fileIds.length === 0 ? { newConversationId: input.conversationId } : { conversationId: input.conversationId }) })
       if (result.conversationId !== input.conversationId) throw new Error("Notion returned a different conversation; refusing to remap silently")
       input.signal.throwIfAborted()
       if (result.usage) input.onUsage?.(result.usage)

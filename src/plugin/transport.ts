@@ -12,14 +12,32 @@ export const SESSION_HEADER = "x-opencode-notion-session"
 export const MESSAGE_HEADER = "x-opencode-notion-message"
 export const AGENT_HEADER = "x-opencode-notion-agent"
 const AUXILIARY = new Set(["title", "summary", "compaction"])
-function newestText(messages: unknown): string {
+interface InputAttachment { base64: string; fileName: string; mimeType: string }
+function dataAttachment(url: unknown, fileName: unknown, fallbackMime = "application/octet-stream"): InputAttachment {
+  if (typeof url !== "string") throw new Error("Attached file has no data")
+  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(url)
+  if (!match) throw new Error("Only inline OpenCode file attachments are supported")
+  const name = typeof fileName === "string" && fileName.trim() ? fileName.trim() : "attachment.bin"
+  return { mimeType: match[1] || fallbackMime, base64: match[2].replace(/\s+/g, ""), fileName: name }
+}
+function newestInput(messages: unknown): { prompt: string; attachments: InputAttachment[] } {
   if (!Array.isArray(messages)) throw new Error("Missing chat messages")
   const message = [...messages].reverse().find(m => m?.role === "user")
   if (!message) throw new Error("Missing user message")
-  if (typeof message.content === "string") return message.content
+  if (typeof message.content === "string") return { prompt: message.content, attachments: [] }
   if (!Array.isArray(message.content)) throw new Error("Unsupported user message")
-  if (message.content.some((part: any) => part?.type !== "text")) throw new Error("This first plugin version accepts text only; attachments are not silently discarded")
-  return message.content.map((part: any) => String(part.text ?? "")).join("\n")
+  const text: string[] = [], attachments: InputAttachment[] = []
+  for (const part of message.content) {
+    if (part?.type === "text") { text.push(String(part.text ?? "")); continue }
+    if (part?.type === "image_url") { attachments.push(dataAttachment(part.image_url?.url, part.image_url?.filename ?? part.filename, "image/png")); continue }
+    if (part?.type === "file") {
+      const file = part.file ?? part
+      attachments.push(dataAttachment(file.file_data ?? file.data ?? file.url, file.filename ?? file.name ?? part.filename, file.media_type ?? file.mediaType ?? part.mediaType))
+      continue
+    }
+    throw new Error(`Unsupported user content part: ${String(part?.type ?? "unknown")}`)
+  }
+  return { prompt: text.join("\n"), attachments }
 }
 function responseError(message: string, status = 400): Response {
   return Response.json({ error: { message, type: "notion_plugin_error" } }, { status })
@@ -42,10 +60,10 @@ export class NotionTransport {
     private readonly context: string, private readonly redact: Redactor = text => text,
     private readonly cancelTools: () => Promise<void> = async () => {},
     readonly models = new NotionModels()) {}
-  private async turn(session: string, message: string, prompt: string, model: string, signal: AbortSignal, onText?: (text: string) => void): Promise<string> {
+  private async turn(session: string, message: string, prompt: string, attachments: InputAttachment[], model: string, reasoningEffort: string | undefined, signal: AbortSignal, onText?: (text: string) => void): Promise<string> {
     if (this.closed) throw new Error("Plugin is shutting down")
     signal.throwIfAborted()
-    const promptHash = hash(prompt)
+    const promptHash = attachments.length || reasoningEffort !== undefined ? hash(JSON.stringify({ prompt, attachments, reasoningEffort })) : hash(prompt)
     const known = this.journal.data.sessions[session]?.turns[message]
     if (known && known.promptHash !== promptHash) throw new Error("Message ID was reused with different content; start a new message")
     if (known?.model !== undefined && known.model !== model) throw new Error("Message ID was reused with a different model; send a new message to change models")
@@ -69,11 +87,11 @@ export class NotionTransport {
       latest = text
       for (const listener of listeners) listener(text)
     }
-    const promise = this.execute(session, message, prompt, promptHash, model, combined, publish)
+    const promise = this.execute(session, message, prompt, attachments, promptHash, model, reasoningEffort, combined, publish)
     const busy = { session, message, promise, controller, listeners, snapshot: () => latest }; this.busy = busy
     try { return await promise } finally { if (this.busy === busy) this.busy = undefined }
   }
-  private async execute(session: string, message: string, prompt: string, promptHash: string, model: string, signal: AbortSignal, onText: (text: string) => void): Promise<string> {
+  private async execute(session: string, message: string, prompt: string, attachments: InputAttachment[], promptHash: string, model: string, reasoningEffort: string | undefined, signal: AbortSignal, onText: (text: string) => void): Promise<string> {
     let conversation = this.journal.data.sessions[session]
     const fresh = !conversation
     if (!conversation) { conversation = { conversationId: randomUUID(), turns: {} }; this.journal.data.sessions[session] = conversation }
@@ -87,7 +105,7 @@ export class NotionTransport {
       signal.throwIfAborted()
       let usage: unknown
       const raw = await this.backend.send({ prompt: fresh ? `${this.context}\n\n${prompt}` : prompt,
-        conversationId: conversation.conversationId, fresh, model, signal, onText, onUsage: value => { usage = value } })
+        conversationId: conversation.conversationId, fresh, model, reasoningEffort, attachments, signal, onText, onUsage: value => { usage = value } })
       signal.throwIfAborted()
       const text = this.redact(raw)
       display?.finalText(text); await display?.flush()
@@ -108,14 +126,15 @@ export class NotionTransport {
       const body = await request.json() as Record<string, any>
       const auxiliary = body.model === META_MODEL || AUXILIARY.has(request.headers.get(AGENT_HEADER) ?? "")
       const model = body.model === META_MODEL ? undefined : this.models.resolve(body.model)
-      const prompt = newestText(body.messages)
+      const { prompt, attachments } = newestInput(body.messages)
+      const reasoningEffort = body.reasoningEffort ?? body.reasoning_effort
       const session = request.headers.get(SESSION_HEADER) ?? ""
       const message = request.headers.get(MESSAGE_HEADER) ?? ""
       const valid = (id: string) => /^[a-zA-Z0-9_-]{1,160}$/.test(id) && !["__proto__", "constructor", "prototype"].includes(id)
       if (!auxiliary && (!valid(session) || !valid(message))) return responseError("OpenCode session/message headers are missing or invalid. Use the supported plugin and OpenCode version")
       const abort = new AbortController(); const signal = AbortSignal.any([request.signal, abort.signal])
       // Metadata stays local, even if OpenCode explicitly uses the main model.
-      const run = (onText?: (text: string) => void) => auxiliary ? Promise.resolve(prompt.trim().split(/\n/)[0].slice(0, 72) || "Notion conversation") : this.turn(session, message, prompt, model!, signal, onText)
+      const run = (onText?: (text: string) => void) => auxiliary ? Promise.resolve(prompt.trim().split(/\n/)[0].slice(0, 72) || "Notion conversation") : this.turn(session, message, prompt, attachments, model!, reasoningEffort, signal, onText)
       const metrics = () => auxiliary ? {} : usageEnvelope(readTurnUsage(this.journal.data.sessions[session]?.turns[message]))
       if (!body.stream) {
         const text = this.redact(await run())

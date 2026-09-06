@@ -1113,12 +1113,12 @@ export class NotionClient {
     throw new Error("Timed out waiting for attachment processing");
   }
 
-  private async uploadInferenceTranscriptAttachment(account: AccountContext, prepared: PreparedAttachment, conversationId?: string, processForInference = false): Promise<AttachmentUploadResult> {
+  private async uploadInferenceTranscriptAttachment(account: AccountContext, prepared: PreparedAttachment, conversationId?: string, processForInference = false, createIfMissing = false): Promise<AttachmentUploadResult> {
     const existing = conversationId ? this.sessions.get(conversationId) : undefined;
-    if (conversationId && (!existing || existing.transport !== "inference_transcript")) {
+    if (conversationId && (!existing || existing.transport !== "inference_transcript") && !createIfMissing) {
       throw new Error("Inference-transcript upload requires an active inference-transcript conversation");
     }
-    const threadId = existing?.threadId ?? randomUUID();
+    const threadId = existing?.threadId ?? conversationId ?? randomUUID();
     const session = existing ?? this.createInferenceSession(threadId);
     const serverFileName = transcriptServerFileName(prepared.fileName);
     const pointer = { spaceId: account.spaceId, table: "thread", id: threadId };
@@ -1163,8 +1163,9 @@ export class NotionClient {
     };
   }
 
-  async uploadAttachment(options: AttachmentInput & { conversationId?: string | undefined; transport?: AttachmentTransport | undefined; processForInference?: boolean | undefined }): Promise<AttachmentUploadResult> {
+  async uploadAttachment(options: AttachmentInput & { conversationId?: string | undefined; newConversationId?: string | undefined; transport?: AttachmentTransport | undefined; processForInference?: boolean | undefined }): Promise<AttachmentUploadResult> {
     const requestedTransport = options.transport ?? "auto";
+    if (options.conversationId && options.newConversationId) throw new Error("Provide only one of conversationId or newConversationId");
     if (options.processForInference && requestedTransport !== "inference_transcript") {
       throw new Error("processForInference requires transport inference_transcript");
     }
@@ -1183,7 +1184,7 @@ export class NotionClient {
       throw new Error("Inference-transcript uploads cannot target an Agent Service conversation");
     }
     if (known?.transport === "inference_transcript" || requestedTransport === "inference_transcript") {
-      return this.uploadInferenceTranscriptAttachment(account, prepared, options.conversationId, options.processForInference ?? false);
+      return this.uploadInferenceTranscriptAttachment(account, prepared, options.conversationId ?? options.newConversationId, options.processForInference ?? false, Boolean(options.newConversationId));
     }
     if (known && known.transport !== "agent_service") throw new Error("Attachments cannot cross chat transports");
     const target: AgentUploadTarget = options.conversationId

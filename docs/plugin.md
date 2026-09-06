@@ -194,3 +194,9 @@ npm audit --omit=dev
 `test:opencode:live` はモデル切替・途中テキスト・実 native 操作のカード・最終使用量を同時に検証し、`test:opencode:usage` は標準サイドバーが参照するカウンターと未取得時の挙動を確認します。Linux の実 OpenCode ホストを使用し、macOS の画面操作や TUI ピクセル比較は未検証です。
 
 通常のテストは Notion の応答を模擬し、実アカウントや接続を変更しません。手動 live 検証の結果は [validation.md](validation.md) を参照してください。Cookie、会話識別子、接続 credential はリポジトリに含めません。
+
+## Attachments and reasoning effort
+
+OpenCode file attachments are forwarded to Notion AI through its transcript upload flow. Images, PDFs, and other inline files supported by OpenCode are accepted up to Notion's configured attachment limit. Remote URLs are not fetched by the adapter.
+
+Models that expose Notion reasoning controls publish matching OpenCode variants. Use OpenCode's model variant selector to choose `none`, `low`, `medium`, `high`, `xhigh`, or `max` where supported; the selected value is sent as Notion's `reasoningEffort`.
