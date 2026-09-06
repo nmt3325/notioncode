@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
 import { NotionModels } from "../dist/plugin/models.js"
-import { MODEL_CATALOG, normalizeModelName } from "../dist/vendor/notion-ai/models.js"
+import { MODEL_CATALOG, MODEL_REASONING_EFFORTS, normalizeModelName } from "../dist/vendor/notion-ai/models.js"
 import { Journal, hash, saveJson } from "../dist/plugin/storage.js"
 import { NotionTransport, SESSION_HEADER, MESSAGE_HEADER, AGENT_HEADER } from "../dist/plugin/transport.js"
 import { NotionBackend, notionConfig } from "../dist/plugin/notion.js"
@@ -152,10 +152,17 @@ test("every selectable model reaches the real Notion client transcript configura
   assert.equal(requests.length, MODEL_CATALOG.length)
 })
 
-test("OpenCode definitions expose attachments and Notion effort variants",()=>{
-  const definitions=new NotionModels().definitions()
+test("OpenCode definitions expose attachments and every registered Notion effort variant",()=>{
+  const models = new NotionModels("default", true), definitions = models.definitions()
   assert.equal(definitions["gpt-5.2"].attachment,true)
   assert.deepEqual(definitions["gpt-5.2"].modalities,{input:["text","image","pdf"],output:["text"]})
-  assert.equal(definitions["gpt-5.2"].reasoning,true)
-  assert.equal(definitions["gpt-5.2"].variants.high.reasoningEffort,"high")
+  for (const choice of models.choices) {
+    const efforts = MODEL_REASONING_EFFORTS[choice.notionModel]
+    if (!efforts) continue
+    const definition = definitions[choice.id]
+    assert.equal(definition.reasoning, true, choice.notionModel)
+    assert.deepEqual(Object.keys(definition.variants), efforts.supported, choice.notionModel)
+    for (const effort of efforts.supported) assert.equal(definition.variants[effort].reasoningEffort, effort)
+  }
+  assert.deepEqual(Object.keys(definitions["gpt-6-astra"].variants), ["none", "low", "medium", "high", "xhigh", "max"])
 })

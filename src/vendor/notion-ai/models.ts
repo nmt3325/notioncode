@@ -193,6 +193,8 @@ export interface ModelReasoningEfforts {
 const MEDIUM_HIGH: ReasoningEffort[] = ["medium", "high"];
 const LOW_TO_MAX: ReasoningEffort[] = ["low", "medium", "high", "max"];
 const LOW_TO_HIGH: ReasoningEffort[] = ["low", "medium", "high"];
+const NONE_TO_HIGH: ReasoningEffort[] = ["none", "low", "medium", "high"];
+const LOW_TO_XHIGH_MAX: ReasoningEffort[] = ["low", "medium", "high", "xhigh", "max"];
 const NONE_TO_MAX: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 
 /**
@@ -211,9 +213,16 @@ export const MODEL_REASONING_EFFORTS: Record<string, ModelReasoningEfforts> = {
   "oval-kumquat": { supported: MEDIUM_HIGH, default: "medium" },
   "oval-kumquat-medium": { supported: MEDIUM_HIGH, default: "medium" },
   "oval-kumquat-high": { supported: MEDIUM_HIGH, default: "high" },
+  "oregon-grape-low": { supported: LOW_TO_HIGH, default: "low" },
+  "oregon-grape-medium": { supported: LOW_TO_HIGH, default: "medium" },
+  "oregon-grape-high": { supported: LOW_TO_HIGH, default: "high" },
+  "otaheite-apple-low": { supported: LOW_TO_HIGH, default: "low" },
+  "otaheite-apple-medium": { supported: LOW_TO_HIGH, default: "medium" },
+  "otaheite-apple-high": { supported: LOW_TO_HIGH, default: "high" },
   "orange-mousse": { supported: NONE_TO_MAX, default: "medium" },
   "orchid-muffin": { supported: NONE_TO_MAX, default: "medium" },
   "olive-jellyroll": { supported: NONE_TO_MAX, default: "medium" },
+  "gpt-6-astra": { supported: NONE_TO_MAX, default: "medium" },
   "almond-croissant-max": { supported: LOW_TO_MAX, default: "max" },
   "almond-croissant-high": { supported: LOW_TO_MAX, default: "high" },
   "almond-croissant-medium": { supported: LOW_TO_MAX, default: "medium" },
@@ -222,9 +231,20 @@ export const MODEL_REASONING_EFFORTS: Record<string, ModelReasoningEfforts> = {
   "ambrosia-tart-high": { supported: LOW_TO_MAX, default: "high" },
   "ambrosia-tart-medium": { supported: LOW_TO_MAX, default: "medium" },
   "ambrosia-tart-low": { supported: LOW_TO_MAX, default: "low" },
+  "apricot-sorbet-x-high": { supported: LOW_TO_XHIGH_MAX, default: "xhigh" },
+  "apricot-sorbet-max": { supported: LOW_TO_XHIGH_MAX, default: "max" },
+  "apricot-sorbet-high": { supported: LOW_TO_XHIGH_MAX, default: "high" },
+  "apricot-sorbet-medium": { supported: LOW_TO_XHIGH_MAX, default: "medium" },
+  "apricot-sorbet-low": { supported: LOW_TO_XHIGH_MAX, default: "low" },
   "acai-budino-high": { supported: LOW_TO_MAX, default: "high" },
   "agave-flan": { supported: LOW_TO_MAX, default: "medium" },
+  "avocado-froyo-medium": { supported: LOW_TO_MAX, default: "medium" },
+  "angel-cake-high": { supported: NONE_TO_HIGH, default: "high" },
+  "angel-cake-medium": { supported: NONE_TO_HIGH, default: "medium" },
+  "angel-cake-low": { supported: NONE_TO_HIGH, default: "low" },
+  "angel-cake-none": { supported: NONE_TO_HIGH, default: "none" },
   "vertex-gemini-3.5-flash": { supported: LOW_TO_HIGH, default: "low" },
+  "galette-medium-thinking": { supported: LOW_TO_HIGH, default: "medium" },
   "grapefruit-zeppole": { supported: LOW_TO_HIGH, default: "medium" }
 };
 
