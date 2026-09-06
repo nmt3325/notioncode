@@ -47,14 +47,18 @@ export default {id:'notion-live-host-fixture',server:async input=>{
    const body=JSON.parse(init.body);trace({type:'notion.request',conversation:body.threadId,model:body.transcript.find(x=>x.type==='config').value.model});
    const encoder=new TextEncoder();let controller;
    const stream=new ReadableStream({start(c){controller=c}});
-   const emit=text=>controller.enqueue(encoder.encode(JSON.stringify({type:'agent-inference',id:'answer',value:[{type:'thinking',content:'HIDDEN_REASONING_MARKER'},{type:'text',content:text}]})+'\\n'));
+   const emitEvent=event=>controller.enqueue(encoder.encode(JSON.stringify(event)+'\\n'));
+   const emit=text=>emitEvent({type:'agent-inference',id:'answer',value:[{type:'thinking',content:'HIDDEN_REASONING_MARKER'},{type:'text',content:text}]});
    void (async()=>{
-    emit('LIVE_PROGRESS');emit('LIVE_PROGRESS');
+    emit('LIVE_PROG');emit('LIVE_PROG');
+    emitEvent({type:'patch',v:[{o:'a',p:'/s/0/id',v:'answer'},{o:'x',p:'/s/0/value/1/content',v:'RESS'},{o:'x',p:'/s/0/value/0/content',v:'HIDDEN_REASONING_MARKER'}]});
     await delay(400);
     const written=await tool('write',{filePath:join(input.directory,'live.txt'),content:'native write'});if(written.status!=='completed')throw Error('write failed');
     const shell=await tool('bash',{command:'printf LIVE_NATIVE_RESULT; sleep 0.4; printf x >> execution-count',description:'One real native execution',timeout:10000});if(shell.status!=='completed')throw Error('bash failed');
     await tool('read',{filePath:join(input.directory,'missing-file.txt')});
-    trace({type:'notion.final'});emit((revision?'LIVE_REVISED_FINAL ':'LIVE_PROGRESS\\n\\nLIVE_FINAL ')+'LIVE_COOKIE_SECRET '+bearer);controller.close();
+    trace({type:'notion.final'});emit((revision?'LIVE_REVISED_FINAL ':'LIVE_PROGRESS\\n\\nLIVE_FINAL ')+'LIVE_COOKIE_SECRET '+bearer);
+    const counts={inputTokens:revision?2000:1000,outputTokens:revision?220:200,cachedTokensRead:revision?600:300,cachedTokensCreated:40,maxInputTokens:10000,maxContextTokens:12000};
+    const metrics={type:'patch',v:Object.entries(counts).map(([key,value])=>({o:'a',p:'/s/0/'+key,v:value}))};emitEvent(metrics);emitEvent(metrics);controller.close();
    })().catch(error=>controller.error(error));
    return new Response(stream,{headers:{'content-type':'application/x-ndjson'}});
   });
@@ -81,7 +85,7 @@ export default {id:'notion-live-host-fixture',server:async input=>{
   assert.equal(requests.length,2);assert.equal(requests[0].conversation,requests[1].conversation);assert.equal(finals.length,2)
   const models=new NotionModels();assert.equal(requests[0].model,models.resolve("gpt-5.4"));assert.equal(requests[1].model,models.resolve("claude-opus-4.6-medium"))
   const host=rows.filter(x=>x.type==="host.event"), deltas=host.filter(x=>x.event.type==="message.part.delta")
-  assert.ok(deltas.some(x=>x.time<finals[0].time&&x.event.properties.delta.includes("LIVE_PROGRESS")),"standard host must receive public text before upstream completes")
+  assert.ok(deltas.filter(x=>x.time<finals[0].time).map(x=>x.event.properties.delta).join("").includes("LIVE_PROGRESS"),"standard host must receive public text before upstream completes")
   const parts=host.filter(x=>x.event.type==="message.part.updated").map(x=>({part:x.event.properties.part,time:x.time})), tools=parts.filter(x=>x.part.type==="tool")
   assert.ok(tools.some(x=>x.part.state.status==="running"&&x.time<finals[0].time),"tool running card must arrive before completion")
   assert.ok(tools.some(x=>x.part.state.status==="completed"&&x.part.state.output.includes("LIVE_NATIVE_RESULT")),"native output must reach standard tool cards")
@@ -89,6 +93,10 @@ export default {id:'notion-live-host-fixture',server:async input=>{
   const assistants=host.filter(x=>x.event.type==="message.updated"&&x.event.properties.info.role==="assistant").map(x=>x.event.properties.info)
   const assistantIDs=new Set(assistants.map(x=>x.id)),userIDs=new Set(host.filter(x=>x.event.type==="message.updated"&&x.event.properties.info.role==="user").map(x=>x.event.properties.info.id))
   assert.equal(assistantIDs.size,2,"display cards must not trigger another local model step");assert.ok(assistants.every(x=>!x.error),"host assistant must not fail")
+  for(const [modelID,input,output,read] of [["gpt-5.4",700,200,300],["claude-opus-4.6-medium",1400,220,600]]) {
+    const done=assistants.findLast(x=>x.modelID===modelID&&x.finish==="stop");assert.ok(done);
+    assert.deepEqual(done.tokens,{total:input+output+read+40,input,output,reasoning:0,cache:{read,write:40}});assert.equal(done.cost,0);
+  }
   assert.equal(new Set(tools.map(x=>x.part.messageID)).size,2)
   for(const {part} of tools){assert.ok(assistantIDs.has(part.messageID));assert.ok(!userIDs.has(part.messageID));assert.equal(part.sessionID,session);assert.equal(part.metadata.notionDisplay.displayOnly,true);assert.equal(part.metadata.providerExecuted,true);assert.ok(part.state.input.__display_status)}
   const texts=parts.filter(x=>x.part.type==="text"&&x.part.time?.end).map(x=>x.part.text)
@@ -98,7 +106,7 @@ export default {id:'notion-live-host-fixture',server:async input=>{
   const accountDirs=await readdir(join(state,"accounts"));const secret=JSON.parse(await readFile(join(state,"accounts",accountDirs[0],"execution-secret.json"),"utf8")).token
   assert.ok(!log.includes(secret));assert.doesNotMatch(log+first.stdout+second.stdout,/LIVE_COOKIE_SECRET|HIDDEN_REASONING_MARKER/)
   assert.ok(!first.stdout.includes('"tool_calls"')&&!second.stdout.includes('"tool_calls"'))
-  console.log("PASS: real pinned OpenCode host receives live NDJSON text, native running/completed/error tool cards, safe results, exact assistant correlation, continuation and no duplicate execution")
+  console.log("PASS: real pinned OpenCode host receives live NDJSON text, native running/completed/error tool cards, safe results, exact assistant correlation, continuation, reported usage and no duplicate execution")
 } catch(error) {
   if(process.env.KEEP_LIVE_TEST_ARTIFACTS)console.error("Live host fixture retained:",temp)
   if(error.stdout)console.error(String(error.stdout).slice(-6000));if(error.stderr)console.error(String(error.stderr).slice(-6000));throw error

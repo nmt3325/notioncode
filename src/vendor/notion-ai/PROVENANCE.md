@@ -40,3 +40,8 @@ existing part-update route rather than patching the host.
 
 See `docs/usage-ui.md` for public source evidence, the opt-in live-test boundary,
 cache mapping and unchanged-sidebar percentage/cost limitations.
+
+The combined text reducer also links numeric workflow slots to stable inference
+IDs, merges late aliases using per-entry revision order, and excludes similarly
+named nested tool arrays and explicitly non-inference steps. Regression coverage
+is in `test/plugin-stream-slots.test.mjs`; upstream OpenCode remains unmodified.

@@ -56,6 +56,12 @@ jobs:
       - name: Test the real OpenCode host
         run: npm run test:opencode
 
+      - name: Test live text, native tool cards, and model switching
+        run: npm run test:opencode:live
+
+      - name: Test measured usage in the native sidebar
+        run: npm run test:opencode:usage
+
       - name: Test a fresh production package install
         run: npm run test:package
 

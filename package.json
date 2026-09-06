@@ -1,6 +1,6 @@
 {
   "name": "opencode-mcp-bridge",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "OpenCode standard-chat Notion AI provider with an automatically managed execution MCP toolbox",
   "license": "MIT",
   "type": "module",
@@ -30,7 +30,9 @@
     "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs",
     "prepack": "npm run build",
     "test:opencode": "npm run build && node scripts/test-opencode-plugin.mjs",
-    "test:package": "node scripts/test-package.mjs"
+    "test:package": "node scripts/test-package.mjs",
+    "test:opencode:live": "npm run build && node scripts/test-opencode-live.mjs",
+    "test:opencode:usage": "npm run build && node scripts/test-opencode-usage.mjs"
   },
   "keywords": [
     "mcp",

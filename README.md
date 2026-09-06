@@ -20,6 +20,16 @@ Use OpenCode's standard model picker (`/models`) and choose a model under **Noti
 
 The shipped registry includes all **41 production-pickable entries** (including reasoning-level variants). Advanced `includeUnlistedModels: true` also lists the complete **74-entry production-callable registry snapshot**. These are catalog entries, not account-entitlement checks: Notion may reject models unavailable to your account, and the plugin does not silently substitute Sonnet. The snapshot is updated with the package; this is not live account-model discovery. See [model selection and updating](docs/plugin.md#モデルを選ぶ).
 
+## Live text, native tools, and reported usage (0.5.0)
+
+- Public Notion text appears as it arrives, with authoritative final-text reconciliation. If Notion only supplies a final answer, the plugin does not fabricate streaming.
+- Native jobs executed by this plugin's MCP appear in the standard tool cards, with real status and safely bounded arguments/results. These cards do not trigger a second local execution or model step. Notion-native tools and other connectors are not mirrored.
+- Reported input/output/cache counters for the **last Notion inference** reach the standard Context token number. Repeated snapshots are not added twice; observed whole-turn totals remain separate metadata. Missing measurements are not estimated.
+
+**Unchanged-sidebar limits:** context capacity/input budget are retained when Notion reports them, but they are not dynamically installed as the sidebar denominator. Stock `0% used` and `$0.00 spent` are unknown/unpriced placeholders, not measured zero usage or free Notion service. An unmeasured/zero-output response can leave the previous token count visible. No universal model capacity or credit-to-dollar conversion is invented.
+
+See [live text and tool visibility](docs/live-ui.md) and [usage provenance and limitations](docs/usage-ui.md). Model selection remains the separate 0.4.0 milestone; 0.5.0 adds the display integration without replacing OpenCode's UI or upstream source.
+
 ## 自動ビルド（GitHub Actions）
 
 [![Build](https://github.com/nmt3325/notioncode/actions/workflows/build.yml/badge.svg)](https://github.com/nmt3325/notioncode/actions/workflows/build.yml)

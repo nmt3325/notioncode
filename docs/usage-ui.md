@@ -51,9 +51,9 @@ This is an arithmetic sum of reported components, not an estimate of missing cac
 - Local title/summary/metadata work never emits Notion usage and never calls Notion.
 - Legacy journal/job records without provenance remain readable, but their old usage objects are not promoted into measured counters. In particular, the old `{ inputTokens: 0, outputTokens: 0 }` fallback is removed.
 
-## Required integration with the model/configuration work
+## Production integration
 
-The usage branch deliberately does not edit the parent-owned `src/plugin.ts`, model catalog, storage schema, package scripts or CI. Merge these minimal settings into the existing provider configuration; do not replace the rest of the provider hooks:
+Version 0.5.0 already integrates the usage options, unknown model limits, streaming parser, journal and native smoke into production code and CI. The following is a maintainer reference, not an extra configuration step for users:
 
 ```ts
 import { notionUsageOptions, UNKNOWN_NOTION_CONTEXT } from "./plugin/usage.js"
@@ -74,10 +74,10 @@ Keep the following small integration points when reconciling the streaming branc
 2. The backend invokes `onUsage` once after a successful result, same-conversation validation and abort check. Preserve the streaming callbacks and selected `model` alongside it.
 3. Instantiate `InferenceUsageCollector` once per parsed response and call `observe` for every raw parsed event, including final usage-only frames. Use its `result()` for optional `ParsedInferenceStream.usage`; do not restore the old `+=` counter logic when replacing the text parser.
 4. The transport captures the final callback, stores it using `withTurnUsage`, reads complete-turn usage with `readTurnUsage`, and emits `usageEnvelope` once at the end. Preserve the parent model-routing argument and the sixth `models` constructor slot; usage takes no constructor slot.
-5. Optionally add `usage?: NotionUsage` to the parent-owned `Turn` interface. The helper already safely persists and validates it without changing the current journal file format.
-6. Add `node scripts/test-opencode-usage.mjs` to the native-host CI stage after the pinned runtime setup. The unit tests are already matched by `test/*.test.mjs`.
+5. Keep journal version 1 compatibility. The helpers safely persist and validate optional provenance without promoting old zero-filled usage records into measured data.
+6. Both native display/usage smoke tests run in CI after pinned runtime setup. Unit tests are matched by `test/*.test.mjs`; the explicit opt-in real-account harness never runs in CI.
 
-The smoke fixture applies the configuration integration above and exercises the real backend, SDK and host. It is not a substitute for making these settings in the merged production configuration.
+The smoke fixture asserts the actual production provider settings and exercises the real backend, SDK and host. It does not repair missing production integration with fixture-only configuration overrides.
 
 ## Honest context limits and unchanged-UI limitations
 

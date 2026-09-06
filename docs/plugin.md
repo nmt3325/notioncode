@@ -26,7 +26,7 @@ Notion Web 内部 API を利用しています。公式の安定 API ではな�
 mkdir -p "$HOME/.local/share/notioncode"
 cd "$HOME/.local/share/notioncode"
 npm init -y
-npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.4.0.tgz
+npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.5.0.tgz
 node -p 'require("node:url").pathToFileURL(require.resolve("opencode-mcp-bridge")).href'
 ```
 
@@ -117,10 +117,21 @@ OpenCode を正常終了し、最新版の Actions artifact をダウンロー�
 
 ```sh
 cd "$HOME/.local/share/notioncode"
-npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.4.0.tgz
+npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.5.0.tgz
 ```
 
 その後、認証・公開URLの環境変数を設定した同じシェルからプロジェクトで OpenCode を再起動します。`plugin` の file URL は変わりません。既存の認証ファイルや `~/.local/state/opencode-notion` の会話状態は削除しないでください。
+
+## リアルタイム表示とトークン情報（0.5.0）
+
+モデル選択は 0.4.0 で追加済みです。0.5.0 は以下を別の変更として追加します。
+
+- **返答の途中表示**：Notion が返した公開テキストを受信し次第、標準チャットへ反映します。上流が最終返答しか返さない場合は最終表示のままです。Agent Service の場合はポーリング間隔に従います。
+- **実行操作の表示**：このプラグインの MCP を通った native ジョブの実行中・完了・失敗などを、標準ツールカードに表示します。安全に整形した引数・結果を含みますが、表示からツールを再実行しません。Notion 自体のツール、他の MCP 接続、独立した制御 RPC の全履歴は表示対象外です。
+- **Context のトークン数**：Notion が報告した最後の推論の入力・出力・キャッシュ使用量を反映します。内部の全推論の合計や、会話全体のコンテキスト量という意味ではありません。繰り返し届く累積値は二重加算しません。
+- **％と料金の制約**：応答に含まれるコンテキスト上限・入力予算は保存しますが、標準サイドバーの分母へ動的に反映する部分は未対応です。`0% used` / `$0.00 spent` は標準 UI の未取得・未課金設定時の表示であり、実測のゼロや無料という意味ではありません。数値が未取得、または出力ゼロのターンでは、前のトークン数が残る場合もあります。
+
+固定の 200K コンテキストを全モデルの実測値として扱うことはやめ、未確認の上限は不明のままにしています。OpenCode 本体・標準 UI は変更していません。詳細は [live-ui.md](live-ui.md) / [usage-ui.md](usage-ui.md) を参照してください。
 
 ## 全許可モードと境界
 
@@ -142,7 +153,7 @@ npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.4.0.tgz
 - 強制終了でロックが残った場合は、該当 OpenCode が動作していないことを確認し、エラーに示された lock だけを削除します。会話状態は消さないでください。
 - **一つの公開 URL は一つのプロジェクト／起動専用**です。別ウィンドウ・worktree・別クライアントで共有しないでください。複数プロジェクトには別 URL とポートを用意します。停止は専用 worker の全ジョブが対象です。
 - テキスト入力のみ。添付は黙って捨てず未対応エラーにします。
-- 最終返答を標準 SSE 形式で表示し、待機中は heartbeat を送ります。Notion のトークン単位ストリーミングや、Notion 内のツールカード／途中経過の同期は未実装です。ファイル編集自体は実行されます。
+- 公開テキストを標準 SSE で逐次表示し、待機中は heartbeat を送ります。途中の書き直しは確定時に整合させます。表示されるツールは、この起動に紐づいた専用 MCP の native ジョブです。
 - Notion 全会話の同期・取り込み、quota 回避のワークスペース自動作成／ローテーション、keep-awake、自動 continue は行いません。
 
 ## オプション
@@ -172,10 +183,14 @@ npm run setup:native
 npm run typecheck:native
 npm test
 npm run test:opencode
+npm run test:opencode:live
+npm run test:opencode:usage
 npm run test:package
 npm audit --omit=dev
 ```
 
 `test:opencode` は未改変の固定 OpenCode 本体で plugin loader / provider / assistant イベント／再起動後の会話継続を確認します。TUI のピクセル比較ではありません。`test:package` は tarball を `--ignore-scripts --omit=dev` で新規インストールして、Bun と native runtime の自動取得・起動を検証します。
+
+`test:opencode:live` はモデル切替・途中テキスト・実 native 操作のカード・最終使用量を同時に検証し、`test:opencode:usage` は標準サイドバーが参照するカウンターと未取得時の挙動を確認します。Linux の実 OpenCode ホストを使用し、macOS の画面操作や TUI ピクセル比較は未検証です。
 
 通常のテストは Notion の応答を模擬し、実アカウントや接続を変更しません。手動 live 検証の結果は [validation.md](validation.md) を参照してください。Cookie、会話識別子、接続 credential はリポジトリに含めません。

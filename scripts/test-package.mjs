@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {mkdtemp,mkdir,writeFile,readdir,rm} from "node:fs/promises"
+import {mkdtemp,mkdir,writeFile,readFile,readdir,rm} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import {join,resolve} from "node:path"
 import {pathToFileURL} from "node:url"
@@ -17,6 +17,8 @@ try {
  await run("npm",["install","--ignore-scripts","--omit=dev",join(temp,archive)],consumer)
  const installed=join(consumer,"node_modules/opencode-mcp-bridge"),entry=await import(pathToFileURL(join(installed,"dist/plugin.js")))
  assert.equal(entry.default.id,"opencode-notion-bridge");assert.equal(typeof entry.default.server,"function")
+ const packed=JSON.parse(await readFile(join(installed,"package.json"),"utf8"));assert.equal(packed.version,"0.5.0");assert.equal(packed.exports["."],"./dist/plugin.js")
+ for(const file of ["dist/plugin/live.js","dist/plugin/usage.js","dist/plugin/models.js","dist/vendor/notion-ai/inference-stream.js","dist/vendor/notion-ai/usage.js"])assert.ok((await readFile(join(installed,file))).length)
  const {bundledBun}=await import(pathToFileURL(join(installed,"dist/plugin/config.js")))
  assert.equal((await run(bundledBun(),["--version"],consumer)).stdout.trim(),"1.3.14")
  const {startRuntime}=await import(pathToFileURL(join(installed,"dist/plugin/runtime.js")))
