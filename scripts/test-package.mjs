@@ -11,13 +11,14 @@ const execute=promisify(execFile),project=resolve(import.meta.dirname,".."),temp
 let runtime
 async function run(file,args,cwd){const pending=execute(file,args,{cwd,timeout:15*60*1000,maxBuffer:4*1024*1024});pending.child.stdin.end();return pending}
 try {
+ const sourcePackage=JSON.parse(await readFile(join(project,"package.json"),"utf8"))
  await run("npm",["pack","--pack-destination",temp],project)
  const archive=(await readdir(temp)).find(file=>file.endsWith(".tgz"));assert.ok(archive)
  const consumer=join(temp,"consumer");await mkdir(consumer)
  await run("npm",["install","--ignore-scripts","--omit=dev",join(temp,archive)],consumer)
  const installed=join(consumer,"node_modules/opencode-mcp-bridge"),entry=await import(pathToFileURL(join(installed,"dist/plugin.js")))
  assert.equal(entry.default.id,"opencode-notion-bridge");assert.equal(typeof entry.default.server,"function")
- const packed=JSON.parse(await readFile(join(installed,"package.json"),"utf8"));assert.equal(packed.version,"0.5.0");assert.equal(packed.exports["."],"./dist/plugin.js")
+ const packed=JSON.parse(await readFile(join(installed,"package.json"),"utf8"));assert.equal(packed.version,sourcePackage.version,"installed package version must match the source manifest");assert.equal(packed.exports["."],"./dist/plugin.js")
  for(const file of ["dist/plugin/live.js","dist/plugin/usage.js","dist/plugin/models.js","dist/vendor/notion-ai/inference-stream.js","dist/vendor/notion-ai/usage.js"])assert.ok((await readFile(join(installed,file))).length)
  const {bundledBun}=await import(pathToFileURL(join(installed,"dist/plugin/config.js")))
  assert.equal((await run(bundledBun(),["--version"],consumer)).stdout.trim(),"1.3.14")
