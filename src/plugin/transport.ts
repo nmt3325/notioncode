@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { Journal, hash } from "./storage.js"
+import { readTurnUsage, usageEnvelope, withTurnUsage } from "./usage.js"
 import type { ChatBackend } from "./notion.js"
 export const PROVIDER = "notion-ai"
 export const CHAT_MODEL = "chat"
@@ -54,9 +55,11 @@ export class NotionTransport {
     // Durable intent precedes side effects. A retry never re-executes a turn.
     await this.journal.save()
     try {
+      let usage: unknown
       const text = await this.backend.send({ prompt: fresh ? `${this.context}\n\n${prompt}` : prompt,
-        conversationId: conversation.conversationId, fresh, signal })
-      conversation.turns[message] = { ...turn, status: "complete", text }
+        conversationId: conversation.conversationId, fresh, signal, onUsage: value => { usage = value } })
+      signal.throwIfAborted()
+      conversation.turns[message] = withTurnUsage({ ...turn, status: "complete" as const, text }, usage)
       await this.journal.save(); return text
     } catch (error) {
       conversation.turns[message] = { ...turn, status: signal.aborted ? "interrupted" : "uncertain" }
@@ -81,10 +84,11 @@ export class NotionTransport {
       const abort = new AbortController(); const signal = AbortSignal.any([request.signal, abort.signal])
       // Metadata stays local, even if OpenCode explicitly uses the main model.
       const run = () => auxiliary ? Promise.resolve(prompt.trim().split(/\n/)[0].slice(0, 72) || "Notion conversation") : this.turn(session, message, prompt, signal)
+      const metrics = () => auxiliary ? {} : usageEnvelope(readTurnUsage(this.journal.data.sessions[session]?.turns[message]))
       if (!body.stream) {
         const text = await run()
         return Response.json({ id: `chatcmpl-${randomUUID()}`, object: "chat.completion", created: Math.floor(Date.now()/1000), model: body.model,
-          choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }] })
+          choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }], ...metrics() })
       }
       const id = `chatcmpl-${randomUUID()}`, created = Math.floor(Date.now()/1000), encode = new TextEncoder(), self = this
       let heartbeat: ReturnType<typeof setInterval> | undefined, ended = false
@@ -97,6 +101,8 @@ export class NotionTransport {
           heartbeat = setInterval(() => { if (!ended) c.enqueue(encode.encode(": waiting for Notion\n\n")) }, 10000)
           void run().then(text => {
             send(chunk({ content: text })); send(chunk({}, "stop"))
+            const usage = metrics()
+            if (Object.keys(usage).length) send({ id, object: "chat.completion.chunk", created, model: body.model, choices: [], ...usage })
             if (!ended) { c.enqueue(encode.encode("data: [DONE]\n\n")); ended = true; c.close() }
           }, error => {
             send({ error: { message: self.redact(error instanceof Error ? error.message : String(error)), type: "notion_plugin_error" } })

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { InferenceUsageCollector } from "./usage.js";
 import { basename, extname } from "node:path";
 import { isIP } from "node:net";
 import type { FinalStepShape, AccountContext, AgentUploadedFile, AttachmentDownloadResult, AttachmentUploadResult, ChatAttachment, ChatJob, ChatJobLookup, ChatJobStatus, ChatResult, ChatSession, ChatStartResult, ChatWaitResult, Conversation, ConversationMessage, ConversationSummary, LegacyAttachmentDownloadInput, ListConversationsResult, ParsedInferenceStream, ThreadSignals, TurnOutcome } from "./types.js";
@@ -334,9 +335,12 @@ function cleanLangTags(text: string): string { return text.replace(/<lang\b[^>]*
 function normalizeStreamLine(line: string): string { const trimmed = line.trim(); if (!trimmed || trimmed.startsWith("event:") || trimmed.startsWith(":")) return ""; if (trimmed.startsWith("data:")) { const data = trimmed.slice(5).trim(); return data === "[DONE]" ? "" : data; } return trimmed; }
 
 export function parseInferenceLines(lines: string[]): ParsedInferenceStream {
-  let text = ""; let inputTokens = 0; let outputTokens = 0; const eventTypes: Record<string, number> = {}; const patchTypes = new Map<string, string>(); const patchCounts = new Map<string, number>();
-  for (const rawLine of lines) { const line = normalizeStreamLine(rawLine); if (!line) continue; let event: JsonObject; try { event = object(JSON.parse(line)); } catch { continue; } const type = asString(event.type, "unknown"); eventTypes[type] = (eventTypes[type] ?? 0) + 1; if (type === "error") throw new Error(`Notion AI error: ${asString(event.message, "unknown error")}`); if (type === "premium-feature-unavailable") { const availability = object(event.featureAvailability); const limit = object(availability.limit); const current = limit.current; const total = limit.total; const detail = typeof current === "number" && typeof total === "number" ? ` (AI credit limit reached: ${current}/${total})` : ""; throw new Error(`Notion AI premium feature unavailable${detail}`); } if (type === "agent-inference") { for (const rawEntry of Array.isArray(event.value) ? event.value : []) { const entry = object(rawEntry); if (entry.type === "text" && typeof entry.content === "string") { text = entry.content; } } if (typeof event.inputTokens === "number") inputTokens += event.inputTokens; if (typeof event.outputTokens === "number") outputTokens += event.outputTokens; continue; } if (type !== "patch") continue; for (const rawOperation of Array.isArray(event.v) ? event.v : []) { const operation = object(rawOperation); const op = asString(operation.o); const path = asString(operation.p); if (op === "a" && path.includes("/value/-")) { const entry = object(operation.v); const statePrefix = path.slice(0, path.indexOf("/value/")); const count = patchCounts.get(statePrefix) ?? 0; patchTypes.set(`${statePrefix}/value/${count}`, asString(entry.type)); patchCounts.set(statePrefix, count + 1); } if (op === "a" && path.endsWith("/inputTokens") && typeof operation.v === "number") { inputTokens += operation.v; } if (op === "a" && path.endsWith("/outputTokens") && typeof operation.v === "number") { outputTokens += operation.v; } if (!path.includes("content") || typeof operation.v !== "string") continue; const contentIndex = path.lastIndexOf("/content"); const entryType = contentIndex >= 0 ? patchTypes.get(path.slice(0, contentIndex)) : "text"; if (entryType === "thinking" || entryType === "tool_use") continue; if (op === "x") text += operation.v; else if (op === "p") text = text.replace(/<lang[^>]*\/>/g, "").replace(operation.v.includes("<lang") ? /<lang[^>]*\/>/g : /$/, operation.v); } }
-  return { text: cleanLangTags(text), inputTokens, outputTokens, eventTypes };
+  let text = ""; const usageCollector = new InferenceUsageCollector(); const eventTypes: Record<string, number> = {}; const patchTypes = new Map<string, string>(); const patchCounts = new Map<string, number>();
+  for (const rawLine of lines) { const line = normalizeStreamLine(rawLine); if (!line) continue; let event: JsonObject; try { event = object(JSON.parse(line)); } catch { continue; } const type = asString(event.type, "unknown"); eventTypes[type] = (eventTypes[type] ?? 0) + 1; usageCollector.observe(event); if (type === "error") throw new Error(`Notion AI error: ${asString(event.message, "unknown error")}`); if (type === "premium-feature-unavailable") { const availability = object(event.featureAvailability); const limit = object(availability.limit); const current = limit.current; const total = limit.total; const detail = typeof current === "number" && typeof total === "number" ? ` (AI credit limit reached: ${current}/${total})` : ""; throw new Error(`Notion AI premium feature unavailable${detail}`); } if (type === "agent-inference") { for (const rawEntry of Array.isArray(event.value) ? event.value : []) { const entry = object(rawEntry); if (entry.type === "text" && typeof entry.content === "string") { text = entry.content; } } continue; } if (type !== "patch") continue; for (const rawOperation of Array.isArray(event.v) ? event.v : []) { const operation = object(rawOperation); const op = asString(operation.o); const path = asString(operation.p); if (op === "a" && path.includes("/value/-")) { const entry = object(operation.v); const statePrefix = path.slice(0, path.indexOf("/value/")); const count = patchCounts.get(statePrefix) ?? 0; patchTypes.set(`${statePrefix}/value/${count}`, asString(entry.type)); patchCounts.set(statePrefix, count + 1); } if (!path.includes("content") || typeof operation.v !== "string") continue; const contentIndex = path.lastIndexOf("/content"); const entryType = contentIndex >= 0 ? patchTypes.get(path.slice(0, contentIndex)) : "text"; if (entryType === "thinking" || entryType === "tool_use") continue; if (op === "x") text += operation.v; else if (op === "p") text = text.replace(/<lang[^>]*\/>/g, "").replace(operation.v.includes("<lang") ? /<lang[^>]*\/>/g : /$/, operation.v); } }
+  const usage = usageCollector.result();
+  return { text: cleanLangTags(text), ...(usage ? { usage } : {}),
+    ...(usage?.observedTotals.inputTokens !== undefined ? { inputTokens: usage.observedTotals.inputTokens } : {}),
+    ...(usage?.observedTotals.outputTokens !== undefined ? { outputTokens: usage.observedTotals.outputTokens } : {}), eventTypes };
 }
 
 /** Explains a text-less inference stream instead of reporting a bare "empty response". */
@@ -778,7 +782,7 @@ export class NotionClient {
       return {
         status: "completed", jobId: job.jobId, conversationId: job.conversationId, text: job.text ?? "", model: job.model,
         ...(job.reasoningEffort ? { reasoningEffort: job.reasoningEffort } : {}),
-        usage: job.usage ?? { inputTokens: 0, outputTokens: 0 },
+        ...(job.usage ? { usage: job.usage } : {}),
         ...(started.rehydrated ? { rehydrated: true } : {})
       };
     }
@@ -944,7 +948,7 @@ export class NotionClient {
     if (!parsed.text.trim()) throw new Error(emptyAnswerMessage(account.spaceId, session, parsed.eventTypes));
     for (const file of transcriptFiles) file.usedInChat = true;
     session.turnCount += 1; session.updatedConfigIds.push(randomUUID()); session.model = effectiveModel; session.reasoningEffort = reasoningEffort; this.rememberSession(session);
-    return { conversationId: session.threadId, text: parsed.text, model: effectiveModel, ...(reasoningEffort ? { reasoningEffort } : {}), usage: { inputTokens: parsed.inputTokens, outputTokens: parsed.outputTokens } };
+    return { conversationId: session.threadId, text: parsed.text, model: effectiveModel, ...(reasoningEffort ? { reasoningEffort } : {}), ...(parsed.usage ? { usage: parsed.usage } : {}) };
   }
 
   private async signedRequest(url: string, init: RequestInit, label: string): Promise<Response> {
@@ -1535,7 +1539,7 @@ export class NotionClient {
     session.reasoningEffort = reasoningEffort;
     session.transport = "agent_service";
     this.rememberSession(session);
-    return { conversationId: session.threadId, text, model, ...(reasoningEffort ? { reasoningEffort } : {}), usage: { inputTokens: 0, outputTokens: 0 } };
+    return { conversationId: session.threadId, text, model, ...(reasoningEffort ? { reasoningEffort } : {}) };
   }
 
   /** Raw internal-API POST used by the management tools. */
