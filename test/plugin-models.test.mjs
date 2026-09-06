@@ -46,6 +46,15 @@ test("advanced catalog includes every callable entry without changing existing p
   for (const entry of regular.choices) assert.deepEqual(all.choices.find(item => item.id === entry.id), entry)
   for (const entry of all.choices) assert.equal(all.resolve(entry.id), entry.notionModel)
 })
+test("GPT-6 Astra is exposed under the production provider identifier", () => {
+  const models = new NotionModels()
+  const astra = models.choices.find(entry => entry.id === "gpt-6-astra")
+  assert.ok(astra)
+  assert.equal(astra.name, "GPT-6 Astra")
+  assert.equal(astra.notionModel, "gpt-6-astra")
+  assert.equal(models.resolve("gpt-6-astra"), "gpt-6-astra")
+  assert.equal(normalizeModelName("gpt-6", "default"), "gpt-6-astra")
+})
 test("configured default is explicit and does not force named selections to Sonnet", async t => {
   const models = new NotionModels("gpt-5.4"), f = await fixture(t, models)
   assert.equal(models.resolve("chat"), normalizeModelName("gpt-5.4", "default"))
