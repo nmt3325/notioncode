@@ -43,7 +43,7 @@ export default {id:'notion-provider-host-fixture',server:async()=>{
   const fifth=await run(["--session",session,"attachment-input","--model","notion-ai/gpt-6-astra","--file",attachment]);assert.match(fifth.stdout,/NOTION_HOST_REPLY/)
   const calls=(await readFile(log,"utf8")).trim().split("\n").map(line=>JSON.parse(line))
   assert.equal(calls.length,5);assert.equal(calls[0].fresh,true);assert.equal(calls[1].fresh,false);assert.equal(calls[0].conversationId,calls[1].conversationId);assert.equal(calls[1].prompt,"second-input")
-  assert.equal(calls[0].model,models.defaultModel);assert.equal(calls[2].model,models.resolve("gpt-5.4"));assert.equal(calls[3].model,models.resolve("gemini-3.1-pro"));assert.equal(calls[4].model,"gpt-6-astra");assert.equal(calls[4].attachments.length,1);assert.equal(calls[4].attachments[0].base64,attachmentBase64);assert.equal(calls[4].attachments[0].mimeType,"image/png")
+  assert.equal(calls[0].model,models.defaultModel);assert.equal(calls[2].model,models.resolve("gpt-5.4"));assert.equal(calls[3].model,models.resolve("gemini-3.1-pro"));assert.equal(calls[4].model,"orlando-quinn");assert.equal(calls[4].reasoningEffort,"medium");assert.equal(calls[4].attachments[0].fileName,"attachment.png");assert.equal(calls[4].attachments.length,1);assert.equal(calls[4].attachments[0].base64,attachmentBase64);assert.equal(calls[4].attachments[0].mimeType,"image/png")
   for(const call of calls.slice(1))assert.equal(call.conversationId,calls[0].conversationId)
   await writeFile(join(workspace,"opencode.json"),JSON.stringify({plugin:[pathToFileURL(join(project,"dist/plugin.js")).href]}))
   let failedOutput=""

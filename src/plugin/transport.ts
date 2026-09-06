@@ -17,8 +17,12 @@ function dataAttachment(url: unknown, fileName: unknown, fallbackMime = "applica
   if (typeof url !== "string") throw new Error("Attached file has no data")
   const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(url)
   if (!match) throw new Error("Only inline OpenCode file attachments are supported")
-  const name = typeof fileName === "string" && fileName.trim() ? fileName.trim() : "attachment.bin"
-  return { mimeType: match[1] || fallbackMime, base64: match[2].replace(/\s+/g, ""), fileName: name }
+  const mimeType = (match[1] || fallbackMime).toLowerCase()
+  // The standard OpenAI-compatible SDK discards image filenames. Notion checks
+  // the extension even when contentType is correct, so .bin rejects real PNGs.
+  const extension = ({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic", "image/heif": "heif", "application/pdf": "pdf" } as Record<string, string>)[mimeType] ?? "bin"
+  const name = typeof fileName === "string" && fileName.trim() ? fileName.trim() : `attachment.${extension}`
+  return { mimeType, base64: match[2].replace(/\s+/g, ""), fileName: name }
 }
 function newestInput(messages: unknown): { prompt: string; attachments: InputAttachment[] } {
   if (!Array.isArray(messages)) throw new Error("Missing chat messages")
@@ -127,7 +131,9 @@ export class NotionTransport {
       const auxiliary = body.model === META_MODEL || AUXILIARY.has(request.headers.get(AGENT_HEADER) ?? "")
       const model = body.model === META_MODEL ? undefined : this.models.resolve(body.model)
       const { prompt, attachments } = newestInput(body.messages)
-      const reasoningEffort = body.reasoningEffort ?? body.reasoning_effort
+      // Validate before journal mutation, image upload, or network dispatch.
+      const reasoningEffort = auxiliary ? undefined : this.models.resolveEffort(body.model, body.reasoningEffort !== undefined ? body.reasoningEffort : body.reasoning_effort)
+      if (!auxiliary && body.reasoningEffort !== undefined && body.reasoning_effort !== undefined && reasoningEffort !== this.models.resolveEffort(body.model, body.reasoning_effort)) throw new Error("Conflicting reasoningEffort and reasoning_effort values")
       const session = request.headers.get(SESSION_HEADER) ?? ""
       const message = request.headers.get(MESSAGE_HEADER) ?? ""
       const valid = (id: string) => /^[a-zA-Z0-9_-]{1,160}$/.test(id) && !["__proto__", "constructor", "prototype"].includes(id)

@@ -173,7 +173,7 @@ test("Agent Service aggregate includes only assistant messages, not thinking/too
   assert.equal(agentTranscriptVisibleText(state),"checking\n\ndone")
 })
 
-test("explicit per-turn model reaches Notion and a different model does not inherit old reasoning effort",async t=>{
+test("explicit per-turn model reaches Notion and clearing a variant resets reasoning effort",async t=>{
   const f=await fixture(t), requests=[],c=config(f.dir),backend=new NotionBackend(c,async(_url,init)=>{requests.push(JSON.parse(init.body));return new Response(line(inference("answer")))})
   const id=randomUUID(),base={conversationId:id,signal:new AbortController().signal,prompt:"hello"}
   await backend.send({...base,fresh:true,model:"oatmeal-cookie",reasoningEffort:"high"})
@@ -181,7 +181,7 @@ test("explicit per-turn model reaches Notion and a different model does not inhe
   await backend.send({...base,fresh:false,model:"openai-gpt-4o"})
   const configs=requests.map(body=>body.transcript.filter(x=>x.type==="config").at(-1).value)
   assert.equal(configs[0].model,"oatmeal-cookie");assert.equal(configs[0].reasoningEffort,"high")
-  assert.equal(configs[1].reasoningEffort,"high");assert.equal(configs[2].model,"openai-gpt-4o");assert.equal(configs[2].reasoningEffort,undefined)
+  assert.equal(configs[1].reasoningEffort,"medium");assert.equal(configs[2].model,"openai-gpt-4o");assert.equal(configs[2].reasoningEffort,undefined)
 })
 
 test("snapshot and patch token usage is per-step, repeated snapshots do not double count",()=>{

@@ -1,3 +1,6 @@
+import { resolveReasoningEffort } from "./effort.js"
+import { guardInferenceResponse } from "./selection.js"
+import { normalizeModelName } from "../vendor/notion-ai/models.js"
 import type { NotionUsage } from "./usage.js"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { join } from "node:path"
@@ -21,15 +24,18 @@ export function notionConfig(s: Settings, stateDir?: string): NotionConfig {
 export class NotionBackend implements ChatBackend {
   readonly client: NotionClient
   private readonly signal = new AsyncLocalStorage<AbortSignal | undefined>()
-  constructor(config: NotionConfig, fetcher: typeof fetch = fetch) {
-    const bound: typeof fetch = (url, init) => {
+  constructor(private readonly config: NotionConfig, fetcher: typeof fetch = fetch) {
+    const bound: typeof fetch = async (url, init) => {
       const signal = this.signal.getStore()
-      return fetcher(url, { ...init, redirect: "error", ...(signal ? { signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal } : {}) })
+      const response = await fetcher(url, { ...init, redirect: "error", ...(signal ? { signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal } : {}) })
+      return String(url).endsWith("/runInferenceTranscript") ? guardInferenceResponse(response, init?.body) : response
     }
     this.client = new NotionClient(config, bound)
   }
   async send(input: ChatInput): Promise<string> {
     input.signal.throwIfAborted()
+    const model = normalizeModelName(input.model, this.config.defaultModel)
+    const reasoningEffort = resolveReasoningEffort(model, input.reasoningEffort)
     return this.signal.run(input.signal, async () => {
       const fileIds: string[] = []
       for (const [index, attachment] of (input.attachments ?? []).entries()) {
@@ -39,8 +45,7 @@ export class NotionBackend implements ChatBackend {
       }
       const result = await this.client.chat({ prompt: input.prompt, readOnly: false,
         ...(fileIds.length ? { fileIds } : {}),
-        ...(input.model !== undefined ? { model: input.model } : {}),
-        ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
+        model, ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         ...(input.onText ? { onText: input.onText } : {}),
         ...(input.fresh && fileIds.length === 0 ? { newConversationId: input.conversationId } : { conversationId: input.conversationId }) })
       if (result.conversationId !== input.conversationId) throw new Error("Notion returned a different conversation; refusing to remap silently")

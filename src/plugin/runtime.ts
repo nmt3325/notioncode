@@ -83,7 +83,7 @@ export async function startRuntime(directory: string, options: PluginOptions = {
     const transport = new NotionTransport(backend, journal,
       `This conversation is displayed in OpenCode. For local coding work use only the execution MCP connection named ${JSON.stringify(s.connectionName)}. Its workspace is ${JSON.stringify(s.root)}. Do not substitute another project's execution connection. You own reasoning and tool selection; OpenCode only displays your answer. Tools on this dedicated connection are authorized for automatic execution.`, redact,
       async () => { for (const job of client!.list()) if (!isTerminal(job.status)) client!.cancel(job.job_id) },
-      new NotionModels(s.model, s.includeUnlistedModels))
+      new NotionModels(s.model, s.includeUnlistedModels, s.reasoningEffort))
     const unobserve = client.observe(event => transport.observeExecution(event))
     let closed = false
     return { transport, close: async () => {

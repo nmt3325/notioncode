@@ -32,7 +32,8 @@
     "test:opencode": "npm run build && node scripts/test-opencode-plugin.mjs",
     "test:package": "node scripts/test-package.mjs",
     "test:opencode:live": "npm run build && node scripts/test-opencode-live.mjs",
-    "test:opencode:usage": "npm run build && node scripts/test-opencode-usage.mjs"
+    "test:opencode:usage": "npm run build && node scripts/test-opencode-usage.mjs",
+    "test:notion:model-image": "npm run build && node scripts/test-notion-model-live.mjs"
   },
   "keywords": [
     "mcp",

@@ -197,6 +197,44 @@ npm audit --omit=dev
 
 ## Attachments and reasoning effort
 
-OpenCode file attachments are forwarded to Notion AI through its transcript upload flow. Images, PDFs, and other inline files supported by OpenCode are accepted up to Notion's configured attachment limit. Remote URLs are not fetched by the adapter.
+OpenCode のインライン画像・PDFを Notion の実アップロード処理に転送します。利用できる形式・サイズは同梱 Notion クライアントの制限に従います。標準 SDK が画像名を省略した場合は MIME に対応する拡張子を補います（PNG を `.bin` として送ると Notion に拒否されるため）。外部画像 URL をアダプターが取得することはありません。
 
-Models that expose Notion reasoning controls publish matching OpenCode variants. Use OpenCode's model variant selector to choose `none`, `low`, `medium`, `high`, `xhigh`, or `max` where supported; the selected value is sent as Notion's `reasoningEffort`.
+### GPT-6 Astra と effort
+
+公開モデル名は **`notion-ai/gpt-6-astra`** です。Astra の対応 effort は `low` / `medium` / `high` / `xhigh` / `max`、設定がない場合の既定値は `medium` です。`none`・`minimal` は対応しません。
+
+```sh
+opencode run --model notion-ai/gpt-6-astra --variant high --file ./image.png -- "この画像を説明して"
+```
+
+TUI では標準のモデル variant 選択を利用します。既定値を変更する場合:
+
+```sh
+export NOTION_DEFAULT_MODEL=gpt-6-astra
+export NOTION_REASONING_EFFORT=high
+opencode
+```
+
+プラグインの tuple 設定でも指定できます。既存の設定項目は残してください。
+
+```json
+{
+  "plugin": [["file:///absolute/path/to/notioncode/dist/plugin.js", {
+    "model": "gpt-6-astra",
+    "reasoningEffort": "high"
+  }]]
+}
+```
+
+- プラグインの `reasoningEffort` オプションは環境変数より優先されます。その既定値は設定した既定モデルに適用され、別モデルには持ち越しません。
+- 明示した variant は既定値より優先されます。variant を解除すると設定済みの既定値、なければモデルの既定値へ戻ります。前のターンの `high` などを暗黙に保持しません。
+- OpenAI 互換リクエストの `reasoning_effort` と `reasoningEffort` を受け付けます。両方の指定が矛盾する場合、非文字列、未対応値はアップロード・推論の前に拒否します。
+- 完了済み・実行結果が不確かなメッセージは自動で再送しません。旧形式の履歴で実効設定の同一性を確認できない場合も再実行せず、新しいメッセージを要求します。
+
+### モデル指定の検証範囲
+
+2026-09-06 の実通信では、修正前は Astra を指定しても GPT-5.5 が報告されていました。現在は Notion Web の workflow 用カタログに合わせて変換し、実際の OpenCode ホストから **GPT-6 Astra / high / PNG画像の読み取り** が一致することを確認しています。
+
+HTTP 200、画面のモデル名、アダプターが返す `.model` は検証の根拠にしません。Notion が返す現在の config / inference メタデータで矛盾を検出した場合はエラーにし、同じ推論を自動で再送しません。古い履歴・ツール出力は判定対象にしません。メタデータが欠ける古い応答は互換性のため受け入れますが、「モデル確認済み」とは扱いません。これはサーバーが報告する選択の確認であり、背後のモデル重みの独立した証明ではありません。
+
+詳細と実画像テストの再現方法は [検証記録](validation.md#astra-effort-and-real-image-upload--2026-09-06) を参照してください。
