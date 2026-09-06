@@ -14,6 +14,12 @@ One plugin bundles the Notion provider and the execution MCP. It authenticates w
 
 The public HTTPS endpoint is still user-configured. Normal OpenCode session history remains local, with a persistent Notion conversation mapping. The existing standalone CLI and its default approval behavior remain available below.
 
+## Notion AI model selection (0.4.0)
+
+Use OpenCode's standard model picker (`/models`) and choose a model under **Notion AI**. The selected model is explicitly sent to Notion on every new turn, including a continued conversation. `notion-ai/chat` remains compatible and is now clearly labelled with its configured default, rather than hiding that default behind a generic name.
+
+The shipped registry includes all **41 production-pickable entries** (including reasoning-level variants). Advanced `includeUnlistedModels: true` also lists the complete **74-entry production-callable registry snapshot**. These are catalog entries, not account-entitlement checks: Notion may reject models unavailable to your account, and the plugin does not silently substitute Sonnet. The snapshot is updated with the package; this is not live account-model discovery. See [model selection and updating](docs/plugin.md#モデルを選ぶ).
+
 ## 自動ビルド（GitHub Actions）
 
 [![Build](https://github.com/nmt3325/notioncode/actions/workflows/build.yml/badge.svg)](https://github.com/nmt3325/notioncode/actions/workflows/build.yml)

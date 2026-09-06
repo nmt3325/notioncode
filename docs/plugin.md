@@ -18,12 +18,35 @@ OpenCode 標準チャット → Notion プロバイダー → Notion AI (token_v
 
 Notion Web 内部 API を利用しています。公式の安定 API ではなく、変更時には追従が必要です。現在の接続先は app.notion.com です。
 
-## PR / ソース版の導入
+## ビルド済みパッケージの導入（推奨）
 
-この変更は npm 公開操作を含みません。PR 版は次のようにビルドします。プラグイン自体は編集対象プロジェクトの外に配置してください。
+[Build の成功した実行](https://github.com/nmt3325/notioncode/actions/workflows/build.yml) の Artifacts から ZIP をダウンロードして展開します。展開先で Linux は `sha256sum --check SHA256SUMS`、macOS は `shasum -a 256 -c SHA256SUMS` で検証できます。プラグイン自体は編集対象プロジェクトの外に置いてください。
 
 ```sh
-git clone --branch feat/notion-opencode-plugin https://github.com/nmt3325/opencode-mcp-bridge.git "$HOME/.local/share/opencode-notion-plugin"
+mkdir -p "$HOME/.local/share/notioncode"
+cd "$HOME/.local/share/notioncode"
+npm init -y
+npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.4.0.tgz
+node -p 'require("node:url").pathToFileURL(require.resolve("opencode-mcp-bridge")).href'
+```
+
+`/path/to/...` は展開した tarball の実際のパスです。最後に出力された file URL を既存の OpenCode 設定の `plugin` 配列に追加してください。通常は `~/.config/opencode/opencode.json` または `opencode.jsonc` です。**既存ファイルが `.jsonc` ならそのファイルを編集し、別の `.json` を作らないでください。**
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["file:///absolute/path/to/notioncode/node_modules/opencode-mcp-bridge/dist/plugin.js"]
+}
+```
+
+既存項目は残し、`$schema` と `plugin` は同じ一つの `{}` に入れます。`{...}, {...}` と二つのトップレベルオブジェクトに分ける形式は無効です。
+
+## ソースからの導入
+
+このパッケージはまだ npm に公開していません。ソース版は次のようにビルドします。プラグイン自体は編集対象プロジェクトの外に配置してください。
+
+```sh
+git clone --branch main https://github.com/nmt3325/notioncode.git "$HOME/.local/share/opencode-notion-plugin"
 cd "$HOME/.local/share/opencode-notion-plugin"
 npm ci --ignore-scripts
 npm run build
@@ -74,6 +97,31 @@ opencode
 
 既存セッションで別モデルを明示選択している場合は標準 UI から Notion AI を選んでください。セットアップ失敗時も Notion プロバイダーに設定エラーを返し、別のローカル LLM へ黙って切り替えません。既存の他の Notion 接続を乗っ取ったり、権限を変更したりはしません。
 
+## モデルを選ぶ
+
+OpenCode の `/models`（標準モデル選択）で **Notion AI** の一覧から選びます。GPT、Claude、Gemini、Kimi、Grok、DeepSeek、GLM 系の選択可能な全カタログ項目を登録します。High / Medium / Low などもカタログにある場合は別の選択肢になります。モデル変更は次の新しいメッセージから反映され、Notion の会話は同じまま継続します。
+
+- 表示名だけでなく、選んだモデルを Notion の設定に毎ターン明示して送ります。
+- `Notion AI · Configured default (...)` はプラグイン設定の既定モデルです。Notion の自動モデル選択という意味ではありません。`model` オプション / `NOTION_DEFAULT_MODEL` がこの既定値を決めます。
+- OpenCode 設定のトップレベルに例えば `"model": "notion-ai/gpt-5.4"` を追加すると、起動時のモデルを固定できます。既存の同じ JSON オブジェクト内に追加してください。プラグインは明示された Notion モデル設定を上書きしません。
+- `Notion local metadata` はタイトル・要約などのローカル補助用です。会話用モデルとしては選ばないでください。
+- 完了済みメッセージを別モデルで再実行しません。変更後は新しいメッセージを送ってください。
+
+通常の一覧は同梱の Notion Web モデルレジストリの **production-pickable な41項目**です。Notion が通常の選択画面には出していない項目も必要なら、プラグインの tuple オプションに `"includeUnlistedModels": true` を指定すると production-callable な全74項目を表示します（未掲載のモデルには表示上の注意書きが付きます）。
+
+**カタログとアカウントでの利用権限は別です。** 一覧はログインアカウントの許可モデルをリアルタイムに取得したものではなく、同梱のレジストリスナップショットです。Notion 側で提供終了・権限制限されているモデルはエラーになることがあります。その際に別モデルへ黙って切り替えません。新規モデルの追加にはカタログ更新が必要です。
+
+### インストール済み版を更新する
+
+OpenCode を正常終了し、最新版の Actions artifact をダウンロード・展開して実行します。
+
+```sh
+cd "$HOME/.local/share/notioncode"
+npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.4.0.tgz
+```
+
+その後、認証・公開URLの環境変数を設定した同じシェルからプロジェクトで OpenCode を再起動します。`plugin` の file URL は変わりません。既存の認証ファイルや `~/.local/state/opencode-notion` の会話状態は削除しないでください。
+
 ## 全許可モードと境界
 
 初期版は **全許可モード固定**。`read` / `write` / `edit` / `glob` / `grep` / `bash` / `webfetch` / `todowrite` が承認待ちなしで実行されます。MCP の bearer credential は token_v2 とは別に生成・保存します。Notion トークンやホストのモデル API キーを worker の環境には渡しません。
@@ -112,6 +160,7 @@ opencode
 | bun | OPENCODE_MCP_BUN | platform optional dependency |
 | port | OPENCODE_MCP_PORT | 8787 |
 | autoSetup | なし | true |
+| includeUnlistedModels | なし | false（通常非表示のカタログ項目も一覧に含める） |
 
 state/runtime は編集対象プロジェクトの外に置きます。bind は 127.0.0.1 固定です。
 

@@ -4,11 +4,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { createRequire } from "node:module"
 import { hash } from "./storage.js"
 import { UPSTREAM } from "../config.js"
-export interface PluginOptions { publicUrl?: string; accountFile?: string; spaceId?: string; model?: string; stateDir?: string; runtimeDir?: string; bun?: string; port?: number; autoSetup?: boolean }
+export interface PluginOptions { publicUrl?: string; accountFile?: string; spaceId?: string; model?: string; stateDir?: string; runtimeDir?: string; bun?: string; port?: number; autoSetup?: boolean; includeUnlistedModels?: boolean }
 export interface Settings {
   root: string; publicUrl: string; tokenV2: string; account: Record<string, string>
   model: string; stateBase: string; runtimeDir: string; bun: string; port: number
-  autoSetup: boolean; connectionName: string
+  autoSetup: boolean; includeUnlistedModels: boolean; connectionName: string
 }
 export function outside(root: string, target: string): boolean {
   const p = relative(root, target)
@@ -27,6 +27,7 @@ export function bundledBun(): string {
   return join(dirname(require.resolve(`@oven/bun-${os}-${arch}${suffix}/package.json`)), "bin", os === "windows" ? "bun.exe" : "bun")
 }
 export async function settings(directory: string, options: PluginOptions = {}, env = process.env): Promise<Settings> {
+  if (options.includeUnlistedModels !== undefined && typeof options.includeUnlistedModels !== "boolean") throw new Error("includeUnlistedModels must be a boolean")
   const root = await realpath(directory)
   if (dirname(root) === root) throw new Error("A filesystem root cannot be the execution workspace")
   const raw = options.publicUrl ?? env.OPENCODE_NOTION_MCP_URL
@@ -52,6 +53,6 @@ export async function settings(directory: string, options: PluginOptions = {}, e
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("MCP port must be between 1 and 65535")
   return { root, publicUrl: url.href, tokenV2, account, stateBase, runtimeDir,
     model: options.model ?? env.NOTION_DEFAULT_MODEL ?? "default",
-    bun: options.bun ?? env.OPENCODE_MCP_BUN ?? bundledBun(), port, autoSetup: options.autoSetup !== false,
+    bun: options.bun ?? env.OPENCODE_MCP_BUN ?? bundledBun(), port, autoSetup: options.autoSetup !== false, includeUnlistedModels: options.includeUnlistedModels === true,
     connectionName: `OpenCode ${basename(root)} [${hash(root).slice(0, 10)}]` }
 }

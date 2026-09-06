@@ -1,9 +1,11 @@
 import type { Plugin, PluginModule, Hooks } from "@opencode-ai/plugin"
 import { startRuntime } from "./plugin/runtime.js"
 import type { PluginOptions } from "./plugin/config.js"
+import { NotionModels } from "./plugin/models.js"
 import { AGENT_HEADER, CHAT_MODEL, MESSAGE_HEADER, META_MODEL, PROVIDER, SESSION_HEADER, type NotionTransport } from "./plugin/transport.js"
 // Separated from startup so the real hooks can be tested with a mock backend.
-export function providerHooks(transport: Pick<NotionTransport, "fetch">, close: () => Promise<void>): Hooks {
+export function providerHooks(transport: Pick<NotionTransport, "fetch"> & Partial<Pick<NotionTransport, "models">>, close: () => Promise<void>): Hooks {
+  const models = transport.models ?? new NotionModels()
   return {
     config: async legacy => {
       // The published plugin still references the old root SDK Config type.
@@ -12,13 +14,12 @@ export function providerHooks(transport: Pick<NotionTransport, "fetch">, close: 
       config.provider ??= {}
       config.provider[PROVIDER] = { name: "Notion AI", npm: "@ai-sdk/openai-compatible",
         options: { baseURL: "https://opencode-notion.invalid/v1", apiKey: "local-adapter-not-a-credential", fetch: transport.fetch, timeout: false, includeUsage: false },
-        models: {
-          [CHAT_MODEL]: { name: "Notion AI", tool_call: false, attachment: false, reasoning: false, limit: { context: 200000, output: 32000 } },
-          [META_MODEL]: { name: "Notion local metadata", tool_call: false, attachment: false, reasoning: false, limit: { context: 200000, output: 1000 } },
-        } }
-      config.model = `${PROVIDER}/${CHAT_MODEL}`; config.small_model = `${PROVIDER}/${META_MODEL}`
+        models: models.definitions() }
+      // Preserve explicit Notion selections, never fall back to a local LLM.
+      if (!config.model?.startsWith(`${PROVIDER}/`) || config.model === `${PROVIDER}/${META_MODEL}`) config.model = `${PROVIDER}/${CHAT_MODEL}`
+      config.small_model = `${PROVIDER}/${META_MODEL}`
       config.default_agent = "notion"; config.agent ??= {}
-      config.agent.notion = { description: "Notion AI chat with the local execution MCP", mode: "primary", model: `${PROVIDER}/${CHAT_MODEL}`,
+      config.agent.notion = { description: "Notion AI chat with the local execution MCP", mode: "primary", model: config.model,
         tools: { "*": false }, permission: { edit: "deny", bash: "deny", webfetch: "deny", external_directory: "deny" },
         prompt: "Notion AI owns this conversation and executes work through its dedicated MCP. This OpenCode agent is only a display adapter." }
       config.compaction = { ...config.compaction, auto: false, prune: false }

@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { Journal, hash } from "./storage.js"
 import type { ChatBackend } from "./notion.js"
-export const PROVIDER = "notion-ai"
-export const CHAT_MODEL = "chat"
-export const META_MODEL = "metadata"
+import { NotionModels, META_MODEL } from "./models.js"
+export { PROVIDER, CHAT_MODEL, META_MODEL } from "./models.js"
 export const SESSION_HEADER = "x-opencode-notion-session"
 export const MESSAGE_HEADER = "x-opencode-notion-message"
 export const AGENT_HEADER = "x-opencode-notion-agent"
@@ -25,13 +24,15 @@ export class NotionTransport {
   private closed = false
   constructor(private readonly backend: ChatBackend, readonly journal: Journal,
     private readonly context: string, private readonly redact: (text: string) => string = text => text,
-    private readonly cancelTools: () => Promise<void> = async () => {}) {}
-  private async turn(session: string, message: string, prompt: string, signal: AbortSignal): Promise<string> {
+    private readonly cancelTools: () => Promise<void> = async () => {},
+    readonly models = new NotionModels()) {}
+  private async turn(session: string, message: string, prompt: string, model: string, signal: AbortSignal): Promise<string> {
     if (this.closed) throw new Error("Plugin is shutting down")
     signal.throwIfAborted()
     const promptHash = hash(prompt)
     const known = this.journal.data.sessions[session]?.turns[message]
     if (known && known.promptHash !== promptHash) throw new Error("Message ID was reused with different content; start a new message")
+    if (known?.model !== undefined && known.model !== model) throw new Error("Message ID was reused with a different model; send a new message to change models")
     if (known?.status === "complete") return known.text ?? ""
     if (this.busy) {
       if (this.busy.session === session && this.busy.message === message) return this.busy.promise
@@ -41,21 +42,21 @@ export class NotionTransport {
     const controller = new AbortController()
     const combined = AbortSignal.any([signal, controller.signal])
     // Reserve synchronously, before any persistence or network await.
-    const promise = this.execute(session, message, prompt, promptHash, combined)
+    const promise = this.execute(session, message, prompt, promptHash, model, combined)
     const busy = { session, message, promise, controller }; this.busy = busy
     try { return await promise } finally { if (this.busy === busy) this.busy = undefined }
   }
-  private async execute(session: string, message: string, prompt: string, promptHash: string, signal: AbortSignal): Promise<string> {
+  private async execute(session: string, message: string, prompt: string, promptHash: string, model: string, signal: AbortSignal): Promise<string> {
     let conversation = this.journal.data.sessions[session]
     const fresh = !conversation
     if (!conversation) { conversation = { conversationId: randomUUID(), turns: {} }; this.journal.data.sessions[session] = conversation }
-    const turn = { promptHash, conversationId: conversation.conversationId, status: "sending" as const }
+    const turn = { promptHash, model, conversationId: conversation.conversationId, status: "sending" as const }
     conversation.turns[message] = turn
     // Durable intent precedes side effects. A retry never re-executes a turn.
     await this.journal.save()
     try {
       const text = await this.backend.send({ prompt: fresh ? `${this.context}\n\n${prompt}` : prompt,
-        conversationId: conversation.conversationId, fresh, signal })
+        conversationId: conversation.conversationId, fresh, model, signal })
       conversation.turns[message] = { ...turn, status: "complete", text }
       await this.journal.save(); return text
     } catch (error) {
@@ -72,7 +73,7 @@ export class NotionTransport {
     try {
       const body = await request.json() as Record<string, any>
       const auxiliary = body.model === META_MODEL || AUXILIARY.has(request.headers.get(AGENT_HEADER) ?? "")
-      if (body.model !== CHAT_MODEL && body.model !== META_MODEL) return responseError("Unknown Notion provider model")
+      const model = body.model === META_MODEL ? undefined : this.models.resolve(body.model)
       const prompt = newestText(body.messages)
       const session = request.headers.get(SESSION_HEADER) ?? ""
       const message = request.headers.get(MESSAGE_HEADER) ?? ""
@@ -80,7 +81,7 @@ export class NotionTransport {
       if (!auxiliary && (!valid(session) || !valid(message))) return responseError("OpenCode session/message headers are missing or invalid. Use the supported plugin and OpenCode version")
       const abort = new AbortController(); const signal = AbortSignal.any([request.signal, abort.signal])
       // Metadata stays local, even if OpenCode explicitly uses the main model.
-      const run = () => auxiliary ? Promise.resolve(prompt.trim().split(/\n/)[0].slice(0, 72) || "Notion conversation") : this.turn(session, message, prompt, signal)
+      const run = () => auxiliary ? Promise.resolve(prompt.trim().split(/\n/)[0].slice(0, 72) || "Notion conversation") : this.turn(session, message, prompt, model!, signal)
       if (!body.stream) {
         const text = await run()
         return Response.json({ id: `chatcmpl-${randomUUID()}`, object: "chat.completion", created: Math.floor(Date.now()/1000), model: body.model,

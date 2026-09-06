@@ -40,7 +40,7 @@ export async function runHttp(client: OpencodeClient, config: BridgeConfig, log:
   const server = createServer((req, res) => { void (async () => {
     try {
       const path = new URL(req.url ?? "/", "http://localhost").pathname
-      if (path === "/healthz") { const ok = client.info().ready === true; json(res, ok ? 200 : 503, { ok, mode: "toolbox-only", version: "0.3.0" }); return }
+      if (path === "/healthz") { const ok = client.info().ready === true; json(res, ok ? 200 : 503, { ok, mode: "toolbox-only", version: "0.4.0" }); return }
       if (path !== "/mcp") { json(res, 404, { error: "not found" }); return }
       if (!authorized(req, config.mcpToken!)) { json(res, 401, { error: "unauthorized" }); return }
       if (req.headers.origin) { json(res, 403, { error: "Browser-origin requests are not supported; use an authenticated MCP client" }); return }

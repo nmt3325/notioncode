@@ -41,7 +41,7 @@ export async function mcpSecret(path: string): Promise<string> {
   if (typeof value.token !== "string" || value.token.length < 32) throw new Error("Invalid execution MCP credential")
   return value.token
 }
-export interface Turn { promptHash: string; conversationId: string; status: "sending" | "complete" | "uncertain" | "interrupted"; text?: string }
+export interface Turn { promptHash: string; model?: string; conversationId: string; status: "sending" | "complete" | "uncertain" | "interrupted"; text?: string }
 export interface ConversationState { conversationId: string; turns: Record<string, Turn> }
 export interface JournalData { version: 1; sessions: Record<string, ConversationState> }
 export class Journal {
@@ -55,7 +55,7 @@ export class Journal {
     for (const [id, session] of Object.entries(data.sessions)) {
       if (!validId(id) || !record(session) || typeof session.conversationId !== "string" || !record(session.turns)) throw new Error("Corrupt conversation journal")
       for (const [message, turn] of Object.entries(session.turns)) {
-        if (!validId(message) || !record(turn) || turn.conversationId !== session.conversationId || typeof turn.promptHash !== "string" || !/^[a-f0-9]{64}$/.test(turn.promptHash) || !["sending", "complete", "uncertain", "interrupted"].includes(String(turn.status)) || (turn.status === "complete" && typeof turn.text !== "string")) throw new Error("Corrupt conversation turn")
+        if (!validId(message) || !record(turn) || (turn.model !== undefined && (typeof turn.model !== "string" || !turn.model.trim() || turn.model.length > 256)) || turn.conversationId !== session.conversationId || typeof turn.promptHash !== "string" || !/^[a-f0-9]{64}$/.test(turn.promptHash) || !["sending", "complete", "uncertain", "interrupted"].includes(String(turn.status)) || (turn.status === "complete" && typeof turn.text !== "string")) throw new Error("Corrupt conversation turn")
       }
     }
     this.data = data
