@@ -1,3 +1,4 @@
+import { UNKNOWN_NOTION_CONTEXT } from "./usage.js"
 import { MODEL_CATALOG, modelReasoningEfforts, normalizeModelName, type ModelInfo } from "../vendor/notion-ai/models.js"
 export const PROVIDER = "notion-ai"
 export const CHAT_MODEL = "chat"
@@ -48,12 +49,13 @@ export class NotionModels {
     return this.byId.get(id)!.notionModel
   }
   definitions() {
-    const limits = { context: 200000, output: 32000 }
+    // No universal Notion context/output capacity has been verified.
+    const limits = { context: UNKNOWN_NOTION_CONTEXT, output: 0 }
     const chat = (name: string) => ({ name, tool_call: false, attachment: false, reasoning: false, limit: { ...limits } })
     return {
       [CHAT_MODEL]: chat(`Notion AI · Configured default (${this.defaultName})`),
       ...Object.fromEntries(this.choices.map(entry => [entry.id, chat(entry.name + (entry.pickable ? "" : " [Notion picker: unlisted]"))])),
-      [META_MODEL]: { ...chat("Notion local metadata (not a chat model)"), limit: { context: 200000, output: 1000 } },
+      [META_MODEL]: chat("Notion local metadata (not a chat model)"),
     }
   }
 }

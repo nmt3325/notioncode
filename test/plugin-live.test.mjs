@@ -186,8 +186,9 @@ test("snapshot and patch token usage is per-step, repeated snapshots do not doub
   const p=new InferenceText()
   const full={...inference("answer"),inputTokens:10,outputTokens:3}
   p.line(JSON.stringify(full));p.line(JSON.stringify(full))
-  p.line(JSON.stringify({type:"patch",v:[{o:"a",p:"/s/answer/inputTokens",v:10},{o:"a",p:"/s/answer/outputTokens",v:4},
-    {o:"a",p:"/s/next",v:{type:"agent-inference",value:[{type:"text",content:"next"}],inputTokens:2,outputTokens:1}}]}))
+  // Workflow metric patches address numeric slots, not synthetic step labels.
+  p.line(JSON.stringify({type:"patch",v:[{o:"a",p:"/s/0/id",v:"answer"},{o:"a",p:"/s/0/inputTokens",v:10},{o:"a",p:"/s/0/outputTokens",v:4},
+    {o:"a",p:"/s/1",v:{id:"next",type:"agent-inference",value:[{type:"text",content:"next"}],inputTokens:2,outputTokens:1}}]}))
   const result=p.result();assert.equal(result.inputTokens,12);assert.equal(result.outputTokens,5);assert.equal(result.text,"answer\n\nnext")
   assert.throws(()=>p.line(JSON.stringify({type:"premium-feature-unavailable",featureAvailability:{limit:{current:10,total:10}}})),/credit limit reached: 10\/10/)
 })

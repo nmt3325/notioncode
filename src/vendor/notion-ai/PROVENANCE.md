@@ -27,3 +27,16 @@ fixtures. See `test/plugin-live.test.mjs`, `scripts/test-opencode-live.mjs`, and
 `docs/live-ui.md` for coverage, supported event shapes and limitations. The native
 OpenCode source pin remains unchanged; display integration uses host hooks and the
 existing part-update route rather than patching the host.
+
+## Measured-usage integration
+
+- `usage.ts` (new): validates and deduplicates numeric workflow inference counters,
+  preserves absence, last-inference context and separate observed turn totals.
+- `inference-stream.ts`: observes raw events with the usage collector alongside
+  incremental public text. The old zero-filled token accumulator is removed.
+- `types.ts`, `chat-jobs.ts`, and `notion-client.ts`: preserve optional provenance
+  through successful results and durable jobs; no fabricated zero-token fallback
+  is retained for old records or Agent Service responses.
+
+See `docs/usage-ui.md` for public source evidence, the opt-in live-test boundary,
+cache mapping and unchanged-sidebar percentage/cost limitations.

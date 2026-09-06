@@ -777,7 +777,7 @@ export class NotionClient {
       return {
         status: "completed", jobId: job.jobId, conversationId: job.conversationId, text: job.text ?? "", model: job.model,
         ...(job.reasoningEffort ? { reasoningEffort: job.reasoningEffort } : {}),
-        usage: job.usage ?? { inputTokens: 0, outputTokens: 0 },
+        ...(job.usage ? { usage: job.usage } : {}),
         ...(started.rehydrated ? { rehydrated: true } : {})
       };
     }
@@ -944,7 +944,7 @@ export class NotionClient {
     if (!parsed.text.trim()) throw new Error(emptyAnswerMessage(account.spaceId, session, parsed.eventTypes));
     for (const file of transcriptFiles) file.usedInChat = true;
     session.turnCount += 1; session.updatedConfigIds.push(randomUUID()); session.model = effectiveModel; session.reasoningEffort = reasoningEffort; this.rememberSession(session);
-    return { conversationId: session.threadId, text: parsed.text, model: effectiveModel, ...(reasoningEffort ? { reasoningEffort } : {}), usage: { inputTokens: parsed.inputTokens, outputTokens: parsed.outputTokens } };
+    return { conversationId: session.threadId, text: parsed.text, model: effectiveModel, ...(reasoningEffort ? { reasoningEffort } : {}), ...(parsed.usage ? { usage: parsed.usage } : {}) };
   }
 
   private async signedRequest(url: string, init: RequestInit, label: string): Promise<Response> {
@@ -1536,7 +1536,7 @@ export class NotionClient {
     session.reasoningEffort = reasoningEffort;
     session.transport = "agent_service";
     this.rememberSession(session);
-    return { conversationId: session.threadId, text, model, ...(reasoningEffort ? { reasoningEffort } : {}), usage: { inputTokens: 0, outputTokens: 0 } };
+    return { conversationId: session.threadId, text, model, ...(reasoningEffort ? { reasoningEffort } : {}) };
   }
 
   /** Raw internal-API POST used by the management tools. */

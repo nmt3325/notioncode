@@ -1,3 +1,4 @@
+import { notionUsageOptions } from "./plugin/usage.js"
 import type { Plugin, PluginModule, Hooks } from "@opencode-ai/plugin"
 import { startRuntime } from "./plugin/runtime.js"
 import { attachLiveUI } from "./plugin/live.js"
@@ -14,7 +15,7 @@ export function providerHooks(transport: Pick<NotionTransport, "fetch"> & Partia
       const config = legacy as typeof legacy & { default_agent?: string; compaction?: { auto?: boolean; prune?: boolean } }
       config.provider ??= {}
       config.provider[PROVIDER] = { name: "Notion AI", npm: "@ai-sdk/openai-compatible",
-        options: { baseURL: "https://opencode-notion.invalid/v1", apiKey: "local-adapter-not-a-credential", fetch: transport.fetch, timeout: false, includeUsage: false },
+        options: { baseURL: "https://opencode-notion.invalid/v1", apiKey: "local-adapter-not-a-credential", fetch: transport.fetch, timeout: false, ...notionUsageOptions },
         models: models.definitions() }
       // Preserve explicit Notion selections, never fall back to a local LLM.
       if (!config.model?.startsWith(`${PROVIDER}/`) || config.model === `${PROVIDER}/${META_MODEL}`) config.model = `${PROVIDER}/${CHAT_MODEL}`

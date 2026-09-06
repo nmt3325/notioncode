@@ -1,9 +1,10 @@
+import { InferenceUsageCollector } from "./usage.js"
 import type { ParsedInferenceStream } from "./types.js"
 
 /** Cumulative, user-visible text only. No raw event, reasoning, or tool payload escapes. */
 export type TextObserver = (snapshot: string) => void
 interface Entry { type: string; content: string }
-interface Step { entries: Entry[]; inputTokens: number; outputTokens: number }
+interface Step { entries: Entry[] }
 const object = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}
 const string = (v: unknown): string => typeof v === "string" ? v : ""
 function entry(v: unknown): Entry {
@@ -20,12 +21,13 @@ export class InferenceText {
   private steps = new Map<string, Step>()
   private eventTypes: Record<string, number> = Object.create(null)
   private last = ""
+  private usage = new InferenceUsageCollector()
   constructor(private readonly onText?: TextObserver) {}
   private step(id: string): Step {
     let value = this.steps.get(id)
     if (!value) {
       if (this.steps.size >= 10000) throw new Error("Notion inference step limit exceeded")
-      value = { entries: [], inputTokens: 0, outputTokens: 0 }; this.steps.set(id, value)
+      value = { entries: [] }; this.steps.set(id, value)
     }
     return value
   }
@@ -42,6 +44,7 @@ export class InferenceText {
     try { parsed = JSON.parse(line) } catch { return }
     const event = object(parsed), type = string(event.type) || "unknown"
     this.eventTypes[type] = (this.eventTypes[type] ?? 0) + 1
+    this.usage.observe(event)
     if (type === "error") throw new Error(`Notion AI error: ${string(event.message) || "unknown error"}`)
     if (type === "premium-feature-unavailable") {
       const limit = object(object(event.featureAvailability).limit)
@@ -51,8 +54,6 @@ export class InferenceText {
     if (type === "agent-inference") {
       const step = this.step(string(event.id) || "anonymous")
       if (Array.isArray(event.value)) step.entries = event.value.map(entry)
-      if (typeof event.inputTokens === "number") step.inputTokens = event.inputTokens
-      if (typeof event.outputTokens === "number") step.outputTokens = event.outputTokens
     } else if (type === "patch") {
       for (const rawOp of Array.isArray(event.v) ? event.v : []) this.patch(object(rawOp))
     } else return
@@ -62,12 +63,6 @@ export class InferenceText {
   private patch(op: Record<string, unknown>): void {
     const path = string(op.p), operation = string(op.o)
     if (!["a", "p", "x", "r"].includes(operation)) return
-    const usage = /^(.*?)\/(inputTokens|outputTokens)$/.exec(path)
-    if (usage && (operation === "a" || operation === "p") && typeof op.v === "number" && Number.isFinite(op.v) && op.v >= 0) {
-      const step = this.step(usage[1]!.split("/").filter(Boolean).at(-1) || "anonymous")
-      step[usage[2] as "inputTokens" | "outputTokens"] = op.v
-      return
-    }
     // Match exact entry fields, not arbitrary paths containing the word "content".
     const match = /^(.*?)\/value(?:\/(\d+|-)(?:\/(content|type))?)?$/.exec(path)
     if (match) {
@@ -104,13 +99,13 @@ export class InferenceText {
       const id = string(value.id) || path.split("/").filter(Boolean).at(-1) || "anonymous"
       const step = this.step(id)
       step.entries = value.value.map(entry)
-      if (typeof value.inputTokens === "number") step.inputTokens = value.inputTokens
-      if (typeof value.outputTokens === "number") step.outputTokens = value.outputTokens
     }
   }
   result(): ParsedInferenceStream {
-    return { text: this.text(), inputTokens: [...this.steps.values()].reduce((n, x) => n + x.inputTokens, 0),
-      outputTokens: [...this.steps.values()].reduce((n, x) => n + x.outputTokens, 0), eventTypes: this.eventTypes }
+    const usage = this.usage.result()
+    return { text: this.text(), ...(usage ? { usage } : {}),
+      ...(usage?.observedTotals.inputTokens !== undefined ? { inputTokens: usage.observedTotals.inputTokens } : {}),
+      ...(usage?.observedTotals.outputTokens !== undefined ? { outputTokens: usage.observedTotals.outputTokens } : {}), eventTypes: this.eventTypes }
   }
 }
 export function inferenceLines(lines: string[]): ParsedInferenceStream {

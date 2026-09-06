@@ -1,9 +1,10 @@
+import type { NotionUsage } from "./usage.js"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { join } from "node:path"
 import { NotionClient } from "../vendor/notion-ai/notion-client.js"
 import type { NotionConfig } from "../vendor/notion-ai/config.js"
 import type { Settings } from "./config.js"
-export interface ChatInput { prompt: string; conversationId: string; fresh: boolean; signal: AbortSignal; model?: string; reasoningEffort?: string; onText?: (snapshot: string) => void }
+export interface ChatInput { prompt: string; conversationId: string; fresh: boolean; signal: AbortSignal; model?: string; reasoningEffort?: string; onText?: (snapshot: string) => void; onUsage?: (usage: NotionUsage) => void }
 export interface ChatBackend { send(input: ChatInput): Promise<string>; interrupt(conversationId: string): Promise<void> }
 export function notionConfig(s: Settings, stateDir?: string): NotionConfig {
   return {
@@ -36,6 +37,8 @@ export class NotionBackend implements ChatBackend {
         ...(input.onText ? { onText: input.onText } : {}),
         ...(input.fresh ? { newConversationId: input.conversationId } : { conversationId: input.conversationId }) })
       if (result.conversationId !== input.conversationId) throw new Error("Notion returned a different conversation; refusing to remap silently")
+      input.signal.throwIfAborted()
+      if (result.usage) input.onUsage?.(result.usage)
       return result.text
     })
   }

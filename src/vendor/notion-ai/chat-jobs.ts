@@ -1,3 +1,4 @@
+import { readNotionUsage } from "./usage.js";
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -25,11 +26,7 @@ function text(value: unknown): string { return typeof value === "string" ? value
 function finite(value: unknown): number | null { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 function clip(value: string, max: number): string { return value.length > max ? `${value.slice(0, max)}...` : value; }
 function usageOf(value: unknown): ChatJobUsage | undefined {
-  if (!isRecord(value)) return undefined;
-  const inputTokens = finite(value.inputTokens);
-  const outputTokens = finite(value.outputTokens);
-  if (inputTokens === null || outputTokens === null) return undefined;
-  return { inputTokens, outputTokens };
+  return readNotionUsage(value);
 }
 function jobStatus(value: unknown): ChatJobStatus | null {
   return value === "running" || value === "completed" || value === "failed" || value === "orphaned" ? value : null;
