@@ -199,9 +199,11 @@ test("errors after an early callback do not publish completion usage or permit r
   await request(f.transport); assert.equal(f.calls.length, 1)
 })
 test("cancelled turns discard early metrics instead of persisting a successful completion", async t => {
-  const f = await fixture(t, async input => { input.onUsage?.(measured()); await delay(60000, undefined, { signal: input.signal }); return "never" })
+  let dispatched; const dispatch = new Promise(resolve => { dispatched = resolve })
+  const f = await fixture(t, async input => { input.onUsage?.(measured()); dispatched(); await delay(60000, undefined, { signal: input.signal }); return "never" })
   const response = await request(f.transport, { stream: true }), reader = response.body.getReader()
-  await reader.read(); await delay(10); await reader.cancel(); await f.transport.close()
+  // Wait for the real dispatch: a turn aborted before the backend is reached has nothing to interrupt.
+  await reader.read(); await dispatch; await delay(10); await reader.cancel(); await f.transport.close()
   const turn = f.journal.data.sessions.ses_usage.turns.msg_usage
   assert.equal(turn.status, "interrupted"); assert.equal("usage" in turn, false); assert.equal(f.interrupts.length, 1)
 })
