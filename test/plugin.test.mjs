@@ -58,11 +58,11 @@ test("completed requests are idempotent, including after restart", async t => {
   assert.equal(await answer(await request(second)), "回答1"); assert.equal(f.calls.length, 1)
   assert.equal((await request(second, { prompt: "different" })).status, 400); assert.equal(f.calls.length, 1)
 })
-test("active duplicate joins one turn; other sessions cannot steal it", async t => {
+test("active duplicate joins one turn; a second turn cannot steal the same thread", async t => {
   let release; const wait = new Promise(resolve => { release = resolve })
   const f = await fixture(t, async () => { await wait; return "once" })
   const a = request(f.transport); await delay(10); const b = request(f.transport)
-  assert.equal((await request(f.transport, { session: "ses_b", message: "msg_b" })).status, 400)
+  assert.equal((await request(f.transport, { session: "ses_a", message: "msg_b" })).status, 400)
   assert.equal(await answer(await request(f.transport, { model: "metadata", session: "", message: "", prompt: "Local title" })), "Local title")
   release(); assert.equal(await answer(await a), "once"); assert.equal(await answer(await b), "once"); assert.equal(f.calls.length, 1)
 })

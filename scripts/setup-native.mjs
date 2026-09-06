@@ -4,9 +4,11 @@ import { mkdir, readFile, copyFile, access } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { UPSTREAM } from "../dist/config.js"
+import { bundledBun } from "../dist/plugin/config.js"
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const target = resolve(process.env.OPENCODE_MCP_RUNTIME_DIR ?? join(root, ".opencode-runtime"))
-const bun = process.env.OPENCODE_MCP_BUN ?? "bun"
+// The package ships Bun as a platform dependency; setup must not need one on PATH.
+const bun = process.env.OPENCODE_MCP_BUN ?? (() => { try { return bundledBun() } catch { return "bun" } })()
 const version = execFileSync(bun, ["--version"], { encoding: "utf8" }).trim()
 if (version !== UPSTREAM.bun) throw new Error(`Install Bun ${UPSTREAM.bun}; found ${version}. A standalone opencode executable cannot supply the internal tool modules.`)
 const exists = await access(join(target, ".git")).then(() => true, () => false)

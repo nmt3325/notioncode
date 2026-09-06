@@ -21,6 +21,9 @@ await writeFile(config, JSON.stringify({
     "mime-types": [mime],
   } },
 }, null, 2))
-const result = spawnSync(process.env.OPENCODE_MCP_BUN ?? "bun", ["run", "typecheck", "--project", config], { cwd: pkg, stdio: "inherit" })
+// The native typecheck must use the Bun the toolbox actually runs on, so a
+// host without Bun on PATH still checks the pinned runtime.
+const bun = process.env.OPENCODE_MCP_BUN ?? (await import("../dist/config.js")).bundledBun()
+const result = spawnSync(bun, ["run", "typecheck", "--project", config], { cwd: pkg, stdio: "inherit" })
 if (result.error) throw result.error
 process.exitCode = result.status ?? 1

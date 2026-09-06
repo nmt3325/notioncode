@@ -11,7 +11,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { CreateMessageRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { loadConfig, NATIVE_TOOL_IDS, UPSTREAM, workerEnvironment } from "../dist/config.js"
+import { loadConfig, NATIVE_TOOL_IDS, OPTIONAL_NATIVE_TOOL_IDS, UPSTREAM, workerEnvironment } from "../dist/config.js"
 import { OpencodeClient } from "../dist/opencodeClient.js"
 import { buildMcpServer, runHttp } from "../dist/index.js"
 
@@ -70,7 +70,7 @@ before(async () => {
   config = loadConfig({
     OPENCODE_MCP_ROOT: root,
     OPENCODE_MCP_RUNTIME_DIR: process.env.OPENCODE_MCP_RUNTIME_DIR ?? resolve(".opencode-runtime"),
-    OPENCODE_MCP_BUN: process.env.OPENCODE_MCP_BUN ?? "bun",
+    ...(process.env.OPENCODE_MCP_BUN ? { OPENCODE_MCP_BUN: process.env.OPENCODE_MCP_BUN } : {}),
     OPENCODE_MCP_STATE_DIR: join(temporary, "state"),
     OPENCODE_MCP_WAIT_MAX_SECONDS: "1",
   })
@@ -94,12 +94,14 @@ after(async () => {
 
 test("native catalog and original schemas are exposed, delegation is absent", async () => {
   const catalog = (await client.listTools()).tools
-  for (const name of NATIVE_TOOL_IDS) {
+  for (const name of NATIVE_TOOL_IDS.filter((id) => !OPTIONAL_NATIVE_TOOL_IDS.includes(id))) {
     const advertised = catalog.find((tool) => tool.name === name)
-    assert.ok(advertised)
+    assert.ok(advertised, name)
     assert.deepEqual(advertised.inputSchema, backend.tools().find((tool) => tool.name === name).inputSchema)
   }
   assert.deepEqual(catalog.find((tool) => tool.name === "bash").inputSchema.required, ["command"])
+  assert.deepEqual(catalog.find((tool) => tool.name === "apply_patch").inputSchema.required, ["patchText"])
+  for (const name of OPTIONAL_NATIVE_TOOL_IDS) assert.ok(!catalog.some((tool) => tool.name === name), name)
   for (const name of ["opencode_start", "opencode_wait", "opencode_result", "opencode_abort", "opencode_sessions", "task", "opencode_shell"]) {
     assert.ok(!catalog.some((tool) => tool.name === name))
     const response = await client.callTool({ name, arguments: { prompt: "Must not be delegated" } })
@@ -141,6 +143,49 @@ test("native glob and ripgrep find real workspace content", async () => {
   const grep = await complete("grep", { pattern: "changed", include: "*.txt" })
   assert.match(grep.result.output, /Line 1: changed/)
   assert.equal(grep.result.metadata.matches, 1)
+})
+
+test("native apply_patch requests one edit approval and applies a real multi-file patch", async () => {
+  await complete("read", { filePath: join(root, "written.txt") })
+  const patchText = ["*** Begin Patch", "*** Update File: written.txt", "@@", "-changed", "+patched", " 日本語", "*** Add File: patched-new.txt", "+created by patch", "*** End Patch", ""].join("\n")
+  const pending = await call("apply_patch", { patchText })
+  assert.equal(pending.status, "awaiting_permission", JSON.stringify(pending))
+  assert.equal(pending.permission.permission, "edit")
+  assert.equal(await exists(join(root, "patched-new.txt")), false)
+  const done = await finish(pending, true)
+  assert.equal(done.status, "completed", JSON.stringify(done))
+  assert.equal(await readFile(join(root, "written.txt"), "utf8"), "patched\n日本語\n")
+  assert.equal(await readFile(join(root, "patched-new.txt"), "utf8"), "created by patch\n")
+})
+
+test("native apply_patch cannot write outside the workspace root", async () => {
+  await writeFile(join(temporary, "outside-patch.txt"), "do not disclose\n")
+  const patchText = ["*** Begin Patch", "*** Update File: ../outside-patch.txt", "@@", "-do not disclose", "+disclosed", "*** End Patch", ""].join("\n")
+  const job = await finish(await call("apply_patch", { patchText }), true)
+  assert.notEqual(job.status, "completed", JSON.stringify(job))
+  assert.match(job.error ?? "", /outside|denied|external/i)
+  assert.equal(await readFile(join(temporary, "outside-patch.txt"), "utf8"), "do not disclose\n")
+})
+
+test("lsp is published only when native language services are enabled", { timeout: 60000 }, async () => {
+  assert.ok(!backend.tools().some((tool) => tool.name === "lsp"))
+  const enabled = new OpencodeClient(loadConfig({
+    OPENCODE_MCP_ROOT: root,
+    OPENCODE_MCP_RUNTIME_DIR: process.env.OPENCODE_MCP_RUNTIME_DIR ?? resolve(".opencode-runtime"),
+    ...(process.env.OPENCODE_MCP_BUN ? { OPENCODE_MCP_BUN: process.env.OPENCODE_MCP_BUN } : {}),
+    OPENCODE_MCP_STATE_DIR: join(temporary, "state-lsp"),
+    OPENCODE_MCP_WAIT_MAX_SECONDS: "1",
+    OPENCODE_MCP_LSP: "true",
+  }))
+  await enabled.start()
+  try {
+    for (const name of NATIVE_TOOL_IDS) assert.ok(enabled.tools().some((tool) => tool.name === name), name)
+    const lsp = enabled.tools().find((tool) => tool.name === "lsp")
+    assert.ok(lsp.inputSchema.required.includes("operation"))
+    assert.ok(lsp.inputSchema.properties.operation)
+  } finally {
+    await enabled.stop()
+  }
 })
 
 test("upstream argument validation errors are not replaced by local defaults", async () => {

@@ -31,7 +31,6 @@ export class OpenCodeDisplay implements LiveDisplay {
   private readonly raw: RawSdk
   private readonly final = new Map<string, { sessionID: string; text: string }>()
   private readonly queues = new Set<Promise<void>>()
-  private failure?: Error
   private closed = false
   constructor(private readonly input: Pick<PluginInput, "client" | "directory">, private readonly redact: Redactor = text => text) {
     const raw = Reflect.get(input.client, "_client") as RawSdk | undefined
@@ -58,7 +57,6 @@ export class OpenCodeDisplay implements LiveDisplay {
   }
   async begin(sessionID: string, userMessageID: string): Promise<TurnDisplay> {
     if (this.closed) throw new Error("OpenCode display is closed")
-    if (this.failure) throw this.failure
     if (!validID(sessionID) || !validID(userMessageID)) throw new Error("Invalid OpenCode display identity")
     const query = { directory: this.input.directory }
     const user = await this.input.client.session.message({ path: { id: sessionID, messageID: userMessageID }, query, signal: AbortSignal.timeout(5000), throwOnError: true })
@@ -94,7 +92,7 @@ export class OpenCodeDisplay implements LiveDisplay {
         }
       }).catch(error => {
         pendingParts.clear()
-        scopeFailure = this.failure = new Error(`Tool display failed; execution is not retried: ${this.redact(error instanceof Error ? error.message : String(error))}`)
+        scopeFailure = new Error(`Tool display failed; execution is not retried: ${this.redact(error instanceof Error ? error.message : String(error))}`)
       })
       queue = queue.finally(() => {
         draining = false

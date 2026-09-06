@@ -90,8 +90,8 @@ opencode
 起動時にプラグインが自動で行うこと:
 
 1. 必要な native runtime の取得・固定バージョン検証。
-2. 専用 worker と認証付き MCP HTTP サーバーの起動。
-3. プロジェクト名＋パスのハッシュを含む専用接続の Notion への登録または再利用。
+2. 共有デーモン（認証付き MCP HTTP サーバー）への接続。未起動なら起動し、起動済みなら同じデーモンに相乗りします。worker はスレッドごとに分かれます。
+3. 公開 URL のハッシュだけを名前に持つ共有接続の Notion への登録または再利用。プロジェクトごとに接続は増やしません。
 4. その接続の読み取り・書き込み自動実行の有効化。
 5. `notion` エージェントと `notion-ai/chat` の既定設定。
 
@@ -135,7 +135,7 @@ npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.5.0.tgz
 
 ## 全許可モードと境界
 
-初期版は **全許可モード固定**。`read` / `write` / `edit` / `glob` / `grep` / `bash` / `webfetch` / `todowrite` が承認待ちなしで実行されます。MCP の bearer credential は token_v2 とは別に生成・保存します。Notion トークンやホストのモデル API キーを worker の環境には渡しません。
+初期版は **全許可モード固定**。`read` / `write` / `edit` / `apply_patch` / `glob` / `grep` / `bash` / `webfetch` / `todowrite` が承認待ちなしで実行されます。`lsp` は `OPENCODE_MCP_LSP`（プラグインオプション `lsp`）を有効にしたときだけ公開され、有効時は同じく承認待ちなしです。MCP の bearer credential は token_v2 とは別に生成・保存します。Notion トークンやホストのモデル API キーを worker の環境には渡しません。
 
 認証、ファイルツールのパスチェック、`external_directory` / `task` / `question` の拒否は維持します。ただし **シェルは OS のファイルシステム隔離ではありません**。全許可の bash は OS ユーザー権限で動きます。信頼できるプロジェクト、または専用コンテナ／VM で利用してください。
 
@@ -146,14 +146,17 @@ npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.5.0.tgz
 - OpenCode セッションと Notion 会話を対応づけ、**新しいユーザー入力だけ**を送信します。全履歴の重複送信はしません。
 - 完了済みの会話は再起動後も継続します。同じ message の再試行は保存済み返答を返し、編集を再実行しません。
 - タイトル・要約・compaction 用のリクエストはローカル処理。本会話には送りません。自動 compaction は無効です。
-- 一つのプロジェクトで進行できるターンは一つ。他セッションからの同時送信は明示的に拒否します。
+- **1 スレッド（会話）= 1 AI = 1 進行中ターン**。別スレッドは同時に走ります。同じスレッドへの別ターンの同時開始と、他の起動からの割り込みは拒否します。
 - 停止時は Notion 中断を試行し、専用 worker の未完了ジョブをキャンセルします。通信障害時は Notion 側でも確認してください。
 - 送信後に応答が不明になった message は自動再送しません。Notion 側を確認して、新しいメッセージまたは新規チャットを開始します。
-- 状態は既定で `~/.local/state/opencode-notion`。会話の返答も含みます。ディレクトリ 0700 / ファイル 0600 とし、アカウント・ワークスペース・プロジェクトを分離します。
+- 状態は既定で `~/.local/state/opencode-notion`。会話の返答も含みます。ディレクトリ 0700 / ファイル 0600 とし、アカウント・ワークスペース・プロジェクトを分離します。ジャーナルはセッション単位のファイルとロックに分割し、別プロセスからの同時書き込みでも失われません。
 - 強制終了でロックが残った場合は、該当 OpenCode が動作していないことを確認し、エラーに示された lock だけを削除します。会話状態は消さないでください。
-- **一つの公開 URL は一つのプロジェクト／起動専用**です。別ウィンドウ・worktree・別クライアントで共有しないでください。複数プロジェクトには別 URL とポートを用意します。停止は専用 worker の全ジョブが対象です。
+- **一つの公開 URL を複数のプロジェクト・ウィンドウ・worktree で共有できます。** 同じ URL・ポート・state ディレクトリで起動すれば同じ共有デーモンに相乗りし、実行のたびに `env_id` / `thread_id` / `turn_id` で振り分けます。停止はそのスレッドのそのターンのジョブだけが対象で、他スレッドは動き続けます。CLI が終了すると起動の登録を解除し、起動が 0 になって 60 秒後にデーモンが自動終了します。
+- 公開するのは `/mcp` だけです。登録・ターン境界・イベント取得に使う `/control` は 127.0.0.1 限定で、実行用とは別の非公開 bearer を使います。
+- **同じファイルへの同時編集の調停は行いません。** スレッドごとに担当ファイルを分けてください。表示履歴が溢れた場合は欠落として報告するだけで、他スレッドを中断したり実行を再送したりはしません。
+- 共有と並列の詳細、上限、0.5.x からの移行手順は [`docs/shared-execution.md`](shared-execution.md) を参照してください。
 - テキスト入力のみ。添付は黙って捨てず未対応エラーにします。
-- 公開テキストを標準 SSE で逐次表示し、待機中は heartbeat を送ります。途中の書き直しは確定時に整合させます。表示されるツールは、この起動に紐づいた専用 MCP の native ジョブです。
+- 公開テキストを標準 SSE で逐次表示し、待機中は heartbeat を送ります。途中の書き直しは確定時に整合させます。表示されるツールは、そのスレッドのそのターンで実行した共有 MCP の native ジョブだけです。
 - Notion 全会話の同期・取り込み、quota 回避のワークスペース自動作成／ローテーション、keep-awake、自動 continue は行いません。
 
 ## オプション
@@ -170,6 +173,7 @@ npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.5.0.tgz
 | runtimeDir | OPENCODE_MCP_RUNTIME_DIR | stateDir/runtime/1.18.29 |
 | bun | OPENCODE_MCP_BUN | platform optional dependency |
 | port | OPENCODE_MCP_PORT | 8787 |
+| lsp | OPENCODE_MCP_LSP | false（true で native `lsp` ツールを公開） |
 | autoSetup | なし | true |
 | includeUnlistedModels | なし | false（通常非表示のカタログ項目も一覧に含める） |
 

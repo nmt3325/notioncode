@@ -6,6 +6,16 @@ import { parseArgs } from "../dist/index.js"
 
 // Unit tests inject IPC outcomes only, never substitute native tool algorithms.
 const configuration = () => loadConfig({ OPENCODE_MCP_ROOT: "/test/workspace" })
+
+test("the shipped Bun is resolved without one on PATH", async () => {
+  const { existsSync } = await import("node:fs")
+  const resolved = configuration().bun
+  // A bare "bun" only works when the host happens to have one installed, which
+  // is exactly how the shared daemon failed to start.
+  assert.notEqual(resolved, "bun")
+  assert.ok(existsSync(resolved), `the resolved Bun must exist: ${resolved}`)
+  assert.equal(loadConfig({ OPENCODE_MCP_ROOT: "/test/workspace", OPENCODE_MCP_BUN: "/custom/bun" }).bun, "/custom/bun")
+})
 function pending(client, id = "job") {
   const job = { job_id: id, tool: "write", status: "awaiting_permission", created_at: "now", updated_at: "now", bytes: 0, permission: { id: "permission", permission: "edit", patterns: ["file.txt"], metadata: {} } }
   client.jobs.set(id, job)

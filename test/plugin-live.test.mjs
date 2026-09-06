@@ -107,7 +107,7 @@ test("concurrent duplicate stream joins one turn and receives its current snapsh
   t.after(()=>transport.close());t.after(()=>finish())
   const first=[],a=collect(await request(transport),first);await eventually(()=>text(first)==="before ","no progress")
   const second=[],b=collect(await request(transport),second);await eventually(()=>text(second)==="before ","late subscriber missed snapshot")
-  const blocked=await request(transport,{session:"ses_other",stream:false});assert.match(await blocked.text(),/Another Notion turn/)
+  const blocked=await request(transport,{message:"msg_other",stream:false});assert.match(await blocked.text(),/Another Notion turn/)
   finish();await Promise.all([a,b]);assert.equal(calls,1);assert.equal(text(first),"before after");assert.equal(text(second),text(first))
   const replay=await request(transport,{stream:false});assert.equal((await replay.json()).choices[0].message.content,"before after");assert.equal(calls,1)
 })

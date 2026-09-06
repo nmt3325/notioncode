@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { NotionClient } from "../vendor/notion-ai/notion-client.js"
 import type { NotionConfig } from "../vendor/notion-ai/config.js"
 import type { Settings } from "./config.js"
-export interface ChatInput { prompt: string; attachments?: Array<{ base64: string; fileName: string; mimeType: string }>; conversationId: string; fresh: boolean; signal: AbortSignal; model?: string; reasoningEffort?: string; onText?: (snapshot: string) => void; onUsage?: (usage: NotionUsage) => void }
+export interface ChatInput { executionScope?: import("../shared/hub.js").ExecutionScope; prompt: string; attachments?: Array<{ base64: string; fileName: string; mimeType: string }>; conversationId: string; fresh: boolean; signal: AbortSignal; model?: string; reasoningEffort?: string; onText?: (snapshot: string) => void; onUsage?: (usage: NotionUsage) => void }
 export interface ChatBackend { send(input: ChatInput): Promise<string>; interrupt(conversationId: string): Promise<void> }
 export function notionConfig(s: Settings, stateDir?: string): NotionConfig {
   return {

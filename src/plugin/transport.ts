@@ -1,3 +1,4 @@
+import { scopeKey, type ExecutionScope } from "../shared/hub.js"
 import { readTurnUsage, usageEnvelope, withTurnUsage } from "./usage.js"
 import { randomUUID } from "node:crypto"
 import { Journal, hash } from "./storage.js"
@@ -46,81 +47,114 @@ function newestInput(messages: unknown): { prompt: string; attachments: InputAtt
 function responseError(message: string, status = 400): Response {
   return Response.json({ error: { message, type: "notion_plugin_error" } }, { status })
 }
+export interface ExecutionBinding {
+  begin(session: string, message: string, conversationId: string): Promise<{ scope: ExecutionScope; context: string }>
+  end(scope: ExecutionScope): Promise<void>
+}
+interface ActiveTurn {
+  message: string; promptHash: string; model: string; promise: Promise<string>; controller: AbortController
+  listeners: Set<(text: string) => void>; snapshot: () => string | undefined
+}
 export class NotionTransport {
-  private busy?: { session: string; message: string; promise: Promise<string>; controller: AbortController;
-    listeners: Set<(text: string) => void>; snapshot: () => string | undefined }
+  private busy = new Map<string, ActiveTurn>()
   display?: LiveDisplay
-  private displayTurn?: TurnDisplay
+  private displayTurns = new Map<string, TurnDisplay>()
+  private scopedDisplays = new Map<string, TurnDisplay>()
   private displayJobs = new Map<string, TurnDisplay>()
   get redactDisplay(): Redactor { return this.redact }
   observeExecution(event: ExecutionEvent): void {
-    if (event.type === "start" && this.displayTurn) this.displayJobs.set(event.job.job_id, this.displayTurn)
-    const display = this.displayJobs.get(event.job.job_id)
-    display?.update(event)
-    if (isTerminal(event.job.status)) this.displayJobs.delete(event.job.job_id)
+    const key = `${event.scope ? scopeKey(event.scope) : "legacy"}:${event.job.job_id}`
+    if (event.type === "start") {
+      const display = event.scope ? this.scopedDisplays.get(scopeKey(event.scope))
+        : !this.execution && this.displayTurns.size === 1 ? this.displayTurns.values().next().value : undefined
+      if (display) {
+        this.displayJobs.set(key, display)
+        if (this.displayJobs.size > 4096) this.displayJobs.delete(this.displayJobs.keys().next().value!)
+      }
+    }
+    this.displayJobs.get(key)?.update(event)
+    if (isTerminal(event.job.status)) this.displayJobs.delete(key)
   }
   private closed = false
   constructor(private readonly backend: ChatBackend, readonly journal: Journal,
     private readonly context: string, private readonly redact: Redactor = text => text,
-    private readonly cancelTools: () => Promise<void> = async () => {},
-    readonly models = new NotionModels()) {}
+    private readonly cancelTools: (session?: string, message?: string) => Promise<void> = async () => {},
+    readonly models = new NotionModels(), private readonly execution?: ExecutionBinding) {}
   private async turn(session: string, message: string, prompt: string, attachments: InputAttachment[], model: string, reasoningEffort: string | undefined, signal: AbortSignal, onText?: (text: string) => void): Promise<string> {
     if (this.closed) throw new Error("Plugin is shutting down")
     signal.throwIfAborted()
     const promptHash = attachments.length || reasoningEffort !== undefined ? hash(JSON.stringify({ prompt, attachments, reasoningEffort })) : hash(prompt)
-    const known = this.journal.data.sessions[session]?.turns[message]
-    if (known && known.promptHash !== promptHash) throw new Error("Message ID was reused with different content; start a new message")
-    if (known?.model !== undefined && known.model !== model) throw new Error("Message ID was reused with a different model; send a new message to change models")
-    if (known?.status === "complete") return known.text ?? ""
-    if (this.busy) {
-      if (this.busy.session === session && this.busy.message === message) {
-        const busy = this.busy
-        if (onText) { busy.listeners.add(onText); const text = busy.snapshot(); if (text !== undefined) onText(text) }
-        try { return await busy.promise } finally { if (onText) busy.listeners.delete(onText) }
-      }
-      throw new Error("Another Notion turn is active in this workspace. Wait for it to finish or stop it before sending another message")
+    const existing = this.busy.get(session)
+    if (existing) {
+      if (existing.message !== message) throw new Error("Another Notion turn is active in this thread. Each thread has one AI; use another thread for parallel work")
+      if (existing.promptHash !== promptHash) throw new Error("Message ID was reused with different content; start a new message")
+      if (existing.model !== model) throw new Error("Message ID was reused with a different model; send a new message to change models")
+      if (onText) { existing.listeners.add(onText); const text = existing.snapshot(); if (text !== undefined) onText(text) }
+      try { return await existing.promise } finally { if (onText) existing.listeners.delete(onText) }
     }
-    if (known) throw new Error("This message was already dispatched. Its result is uncertain or it was interrupted; it will not be automatically resent. Inspect the Notion conversation, then send a new message")
-    const controller = new AbortController()
-    const combined = AbortSignal.any([signal, controller.signal])
-    // Reserve synchronously, before any persistence or network await.
+    if (this.busy.size >= 32) throw new Error("Concurrent Notion thread limit reached; wait for an active thread")
+    const controller = new AbortController(), combined = AbortSignal.any([signal, controller.signal])
     const listeners = new Set<(text: string) => void>(); if (onText) listeners.add(onText)
     let latest: string | undefined
-    const publish = (text: string) => {
-      if (combined.aborted) return
-      latest = text
-      for (const listener of listeners) listener(text)
-    }
+    const publish = (text: string) => { if (combined.aborted) return; latest = text; for (const listener of listeners) listener(text) }
     const promise = this.execute(session, message, prompt, attachments, promptHash, model, reasoningEffort, combined, publish)
-    const busy = { session, message, promise, controller, listeners, snapshot: () => latest }; this.busy = busy
-    try { return await promise } finally { if (this.busy === busy) this.busy = undefined }
+    const active = { message, promptHash, model, promise, controller, listeners, snapshot: () => latest }; this.busy.set(session, active)
+    try { return await promise } finally { if (this.busy.get(session) === active) this.busy.delete(session) }
   }
   private async execute(session: string, message: string, prompt: string, attachments: InputAttachment[], promptHash: string, model: string, reasoningEffort: string | undefined, signal: AbortSignal, onText: (text: string) => void): Promise<string> {
-    let conversation = this.journal.data.sessions[session]
-    const fresh = !conversation
-    if (!conversation) { conversation = { conversationId: randomUUID(), turns: {} }; this.journal.data.sessions[session] = conversation }
-    const turn = { promptHash, model, conversationId: conversation.conversationId, status: "sending" as const }
-    conversation.turns[message] = turn
-    // Durable intent precedes side effects. A retry never re-executes a turn.
-    await this.journal.save()
-    let display: TurnDisplay | undefined
+    const release = await this.journal.acquire(session)
     try {
-      display = await this.display?.begin(session, message); this.displayTurn = display
       signal.throwIfAborted()
-      let usage: unknown
-      const raw = await this.backend.send({ prompt: fresh ? `${this.context}\n\n${prompt}` : prompt,
-        conversationId: conversation.conversationId, fresh, model, reasoningEffort, attachments, signal, onText, onUsage: value => { usage = value } })
-      signal.throwIfAborted()
-      const text = this.redact(raw)
-      display?.finalText(text); await display?.flush()
-      conversation.turns[message] = withTurnUsage({ ...turn, status: "complete" as const, text }, usage)
-      await this.journal.save(); return text
-    } catch (error) {
-      conversation.turns[message] = { ...turn, status: signal.aborted ? "interrupted" : "uncertain" }
-      try { await this.journal.save() }
-      finally { if (signal.aborted) await Promise.allSettled([this.backend.interrupt(conversation.conversationId), this.cancelTools()]) }
-      throw error
-    } finally { if (this.displayTurn === display) this.displayTurn = undefined }
+      const known = this.journal.data.sessions[session]?.turns[message]
+      if (known && known.promptHash !== promptHash) throw new Error("Message ID was reused with different content; start a new message")
+      if (known?.model !== undefined && known.model !== model) throw new Error("Message ID was reused with a different model; send a new message to change models")
+      if (known?.status === "complete") return known.text ?? ""
+      if (known) throw new Error("This message was already dispatched. Its result is uncertain or it was interrupted; it will not be automatically resent. Inspect the Notion conversation, then send a new message")
+      let conversation = this.journal.data.sessions[session]
+      const fresh = !conversation
+      if (!conversation) { conversation = { conversationId: randomUUID(), turns: {} }; this.journal.data.sessions[session] = conversation }
+      const turn = { promptHash, model, conversationId: conversation.conversationId, status: "sending" as const }
+      conversation.turns[message] = turn
+      await this.journal.save(session)
+      let display: TurnDisplay | undefined, scope: ExecutionScope | undefined, ending: Promise<void> | undefined, dispatched = false
+      const end = () => { if (scope && this.execution) return ending ??= this.execution.end(scope); return Promise.resolve() }
+      try {
+        display = await this.display?.begin(session, message)
+        if (display) this.displayTurns.set(session, display)
+        signal.throwIfAborted()
+        let executionContext = ""
+        if (this.execution) {
+          const opened = await this.execution.begin(session, message, conversation.conversationId)
+          scope = opened.scope; executionContext = opened.context
+          if (display) this.scopedDisplays.set(scopeKey(scope), display)
+        }
+        signal.throwIfAborted()
+        let usage: unknown
+        const prefix = [fresh ? this.context : "", executionContext].filter(Boolean).join("\n\n")
+        dispatched = true
+        const raw = await this.backend.send({ prompt: prefix ? `${prefix}\n\n${prompt}` : prompt,
+          conversationId: conversation.conversationId, fresh, model, reasoningEffort, attachments, signal, onText,
+          ...(scope ? { executionScope: scope } : {}), onUsage: value => { usage = value } })
+        signal.throwIfAborted()
+        await end()
+        const text = this.redact(raw)
+        display?.finalText(text); await display?.flush()
+        conversation.turns[message] = withTurnUsage({ ...turn, status: "complete" as const, text }, usage)
+        await this.journal.save(session); return text
+      } catch (error) {
+        conversation.turns[message] = { ...turn, status: signal.aborted ? "interrupted" : "uncertain" }
+        try { await this.journal.save(session) }
+        finally {
+          const cleanup: Promise<unknown>[] = [end()]
+          if (signal.aborted && dispatched) cleanup.push(this.backend.interrupt(conversation.conversationId), this.cancelTools(session, message))
+          await Promise.allSettled(cleanup)
+        }
+        throw error
+      } finally {
+        if (this.displayTurns.get(session) === display) this.displayTurns.delete(session)
+        if (scope) this.scopedDisplays.delete(scopeKey(scope))
+      }
+    } finally { await release() }
   }
   fetch: typeof fetch = async (input, init) => {
     let request: Request
@@ -182,9 +216,11 @@ export class NotionTransport {
       return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } })
     } catch (error) { return responseError(this.redact(error instanceof Error ? error.message : String(error))) }
   }
+  abort(reason: Error): void { for (const active of this.busy.values()) active.controller.abort(reason) }
   async close(): Promise<void> {
-    this.closed = true; const busy = this.busy
-    busy?.controller.abort(new Error("Plugin disposed"))
-    if (busy) await busy.promise.catch(() => {})
+    this.closed = true
+    this.abort(new Error("Plugin disposed"))
+    await Promise.allSettled([...this.busy.values()].map(active => active.promise))
+    this.displayJobs.clear()
   }
 }

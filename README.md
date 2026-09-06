@@ -30,6 +30,18 @@ The shipped registry includes all **41 production-pickable entries** (including 
 
 See [live text and tool visibility](docs/live-ui.md) and [usage provenance and limitations](docs/usage-ui.md). Model selection remains the separate 0.4.0 milestone; 0.5.0 adds the display integration without replacing OpenCode's UI or upstream source.
 
+## One shared connection with per-run environment and thread routing (0.6.0)
+
+Earlier versions registered a Notion connection and an MCP server per project, and a project could only advance one turn at a time. 0.6.0 keeps **one shared connection** and selects the target at call time: every native and control tool takes `env_id`, `thread_id`, and `turn_id` next to the untouched native `arguments`.
+
+- One shared daemon per public URL. Every start-up that uses the same URL, port, and state directory attaches to it instead of creating a project-specific connection. A finishing run only releases its claim, and the daemon stops itself once nothing owns it.
+- One thread is one AI with one in-flight turn. Different threads run concurrently and can edit different files at the same time, each with its own native worker, permission queue, tool cards, and conversation state.
+- Job listing, waiting, cancellation, and permission replies are scoped to the calling thread's current turn, so ending or interrupting one thread never disturbs another.
+- Only `/mcp` is exposed. Registration, turn boundaries, and event delivery use a loopback-only `/control` endpoint with a separate private bearer that never reaches a model prompt.
+- Concurrent edits to the *same* file are still not arbitrated: give each thread its own files.
+
+See [`docs/shared-execution.md`](docs/shared-execution.md) for the request envelope, limits, and the migration steps from 0.5.x.
+
 ## 自動ビルド（GitHub Actions）
 
 [![Build](https://github.com/nmt3325/notioncode/actions/workflows/build.yml/badge.svg)](https://github.com/nmt3325/notioncode/actions/workflows/build.yml)
@@ -97,9 +109,9 @@ Connect the client to `http://127.0.0.1:8787/mcp` with `Authorization: Bearer <t
 
 ## Tools
 
-Native names: `read`, `write`, `edit`, `glob`, `grep`, `bash`, `webfetch`, `todowrite`.
+Native names: `read`, `write`, `edit`, `apply_patch`, `glob`, `grep`, `bash`, `webfetch`, `todowrite`, plus `lsp` when language-server support is enabled.
 
-Their schemas come directly from the running pinned upstream tools. Do not use the old mirrored schemas. For example, native `bash` requires `command` (not a bridge-specific `description`); `read` uses one-based `offset`; `todowrite` entries use `content`, `status`, and `priority`.
+Their schemas come directly from the running pinned upstream tools. Do not use the old mirrored schemas. For example, native `bash` requires `command` (not a bridge-specific `description`); `read` uses one-based `offset`; `todowrite` entries use `content`, `status`, and `priority`. `apply_patch` takes a single `patchText` in upstream's `*** Begin Patch` format and can add, update, delete, and move several files in one call. `lsp` takes an `operation` such as `hover` or `findReferences` with `filePath`, `line`, `character`, or `query`; it is published only when `OPENCODE_MCP_LSP` is enabled, because the operations need a live language server.
 
 Control tools:
 
@@ -116,7 +128,7 @@ No `opencode_start`, agent-session management, prompt/message/command forwarding
 
 ## Permissions and jobs
 
-Default policy allows `read` (with `.env`-style reads requiring confirmation), `glob`, `grep`, and `todowrite`. `write`/`edit`, `bash`, and `webfetch` require a decision. Native write/edit request the `edit` permission. External-directory, task, and question permissions are permanently denied. An operator may supply explicit native permission rules using `OPENCODE_MCP_PERMISSIONS`; there is no automatic blanket approval.
+Default policy allows `read` (with `.env`-style reads requiring confirmation), `glob`, `grep`, `todowrite`, and the read-only `lsp` tool when it is published. `write`/`edit`, `apply_patch`, `bash`, and `webfetch` require a decision. Native write/edit and `apply_patch` request the `edit` permission; a single patch asks once for every file it touches. External-directory, task, and question permissions are permanently denied, so a patch that writes or moves a file outside the root is refused instead of prompting. An operator may supply explicit native permission rules using `OPENCODE_MCP_PERMISSIONS`; there is no automatic blanket approval.
 
 A call returns a structured job with `job_id` and one of `running`, `awaiting_permission`, `cancelling`, `completed`, `failed`, or `cancelled`. Keep that ID instead of repeating the original operation. When awaiting permission, display the native request and use `opencode_permission_reply` with `job_id`, `permission_id`, and `reply: "once"` or `"reject"`. Approval is limited to that request; rejecting one job does not reject another.
 
@@ -141,7 +153,7 @@ One bridge process serves one workspace and one authenticated principal. HTTP tr
 | `OPENCODE_MCP_MAX_JOBS` | 64; allowed 8–256 |
 | `OPENCODE_MCP_MAX_CONCURRENT` | 8; allowed 1–32, not greater than MAX_JOBS |
 | `OPENCODE_MCP_PERMISSIONS` | JSON native permission rules |
-| `OPENCODE_MCP_LSP` / `OPENCODE_MCP_FORMATTER` | `false`; explicit opt-in for native services |
+| `OPENCODE_MCP_LSP` / `OPENCODE_MCP_FORMATTER` | `false`; explicit opt-in for native services. `OPENCODE_MCP_LSP` also publishes the native `lsp` tool |
 
 `OPENCODE_MCP_DEFAULT_DIRECTORY` remains only as a root alias. `OPENCODE_BASE_URL`, server/API-token credentials, default model/agent selection, and shell-backend selection are rejected rather than silently used. `--base-url` / `--opencode` CLI options are removed. See `node dist/index.js --help`.
 
