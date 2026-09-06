@@ -14,6 +14,28 @@ One plugin bundles the Notion provider and the execution MCP. It authenticates w
 
 The public HTTPS endpoint is still user-configured. Normal OpenCode session history remains local, with a persistent Notion conversation mapping. The existing standalone CLI and its default approval behavior remain available below.
 
+## 自動ビルド（GitHub Actions）
+
+[![Build](https://github.com/nmt3325/notioncode/actions/workflows/build.yml/badge.svg)](https://github.com/nmt3325/notioncode/actions/workflows/build.yml)
+
+`main` への push、Pull Request、`v*` タグの push で自動実行します。[Actions の Build](https://github.com/nmt3325/notioncode/actions/workflows/build.yml) から **Run workflow** で手動実行もできます。
+
+Node.js 22 / Bun 1.3.14 の Ubuntu 環境で、ビルド、native 型チェック、単体・native 結合テスト、実 OpenCode ホストのテスト、新規パッケージインストールのテストを行います。Notion Cookie や追加の Secrets 設定は不要です（CI の Notion 通信はテスト用の実装を使用します）。
+
+成功した実行の **Artifacts → `notioncode-<commit SHA>`** から、以下をダウンロードできます。保存期間は **30 日** です。
+
+- `opencode-mcp-bridge-<version>.tgz`：ビルド済みプラグイン、MCP、runtime セットアップ、ドキュメントを含む npm パッケージ
+- `SHA256SUMS`：パッケージの SHA-256 チェックサム
+
+ダウンロードした Artifact の ZIP を展開したディレクトリで、検証・インストールできます。
+
+```sh
+sha256sum --check SHA256SUMS
+npm install --ignore-scripts ./opencode-mcp-bridge-*.tgz
+```
+
+OpenCode へのプラグイン設定と Notion 認証は [導入手順](docs/plugin.md) を参照してください。npm のパッケージ名は互換性のため `opencode-mcp-bridge` のままです。このワークフローは **npm や GitHub Releases には自動公開しません**。
+
 ## What is native, and what belongs to the bridge?
 
 The worker imports `ReadTool`, `WriteTool`, `EditTool`, `GlobTool`, `GrepTool`, `ShellTool`, `WebFetchTool`, and `TodoWriteTool` from the **unchanged, pinned OpenCode source checkout**. It initializes them with `Tool.init`, exports their descriptions/input schemas with `ToolJsonSchema.fromTool`, and calls their native `execute` implementations.
