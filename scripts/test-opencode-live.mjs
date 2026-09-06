@@ -7,6 +7,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { createServer } from "node:http"
 import { bundledBun } from "../dist/plugin/config.js"
+import { NotionModels } from "../dist/plugin/models.js"
 const exec=promisify(execFile), project=resolve(import.meta.dirname,"..")
 const source=process.env.OPENCODE_MCP_RUNTIME_DIR ?? join(project,".opencode-runtime"), bun=process.env.OPENCODE_MCP_BUN ?? bundledBun()
 const temp=await mkdtemp(join(tmpdir(),"opencode-live-host-"))
@@ -43,7 +44,7 @@ export default {id:'notion-live-host-fixture',server:async input=>{
  const factory=config=>{
   const backend=new NotionBackend({...config,account},async(url,init)=>{
    if(!String(url).endsWith('/runInferenceTranscript'))throw new Error('Unexpected mocked Notion endpoint');
-   const body=JSON.parse(init.body);trace({type:'notion.request',conversation:body.threadId});
+   const body=JSON.parse(init.body);trace({type:'notion.request',conversation:body.threadId,model:body.transcript.find(x=>x.type==='config').value.model});
    const encoder=new TextEncoder();let controller;
    const stream=new ReadableStream({start(c){controller=c}});
    const emit=text=>controller.enqueue(encoder.encode(JSON.stringify({type:'agent-inference',id:'answer',value:[{type:'thinking',content:'HIDDEN_REASONING_MARKER'},{type:'text',content:text}]})+'\\n'));
@@ -71,13 +72,14 @@ export default {id:'notion-live-host-fixture',server:async input=>{
   const env={PATH:process.env.PATH,HOME:home,XDG_CONFIG_HOME:join(home,"config"),XDG_DATA_HOME:join(home,"data"),XDG_STATE_HOME:join(home,"state"),XDG_CACHE_HOME:join(home,"cache"),
     OPENCODE_DISABLE_MODELS_FETCH:"true",OPENCODE_DISABLE_DEFAULT_PLUGINS:"true",OPENCODE_DISABLE_CLAUDE_CODE:"true",OPENCODE_DISABLE_EXTERNAL_SKILLS:"true"}
   async function run(args){const pending=exec(bun,[join(source,"packages/opencode/src/index.ts"),"run","--format","json",...args],{cwd:workspace,env,timeout:120000,maxBuffer:6*1024*1024});pending.child.stdin.end();return pending}
-  const first=await run(["first live turn"]);assert.match(first.stdout,/LIVE_FINAL/)
+  const first=await run(["--model","notion-ai/gpt-5.4","first-live-turn"]);assert.match(first.stdout,/LIVE_FINAL/)
   const stdout=first.stdout.split("\n").flatMap(x=>{try{return [JSON.parse(x)]}catch{return []}}),session=stdout.find(x=>x.sessionID)?.sessionID
-  assert.ok(session);const second=await run(["--session",session,"second live turn"]);assert.match(second.stdout,/LIVE_REVISED_FINAL/)
+  assert.ok(session);const second=await run(["--session",session,"--model","notion-ai/claude-opus-4.6-medium","second-live-turn"]);assert.match(second.stdout,/LIVE_REVISED_FINAL/)
   const log=await readFile(trace,"utf8"), rows=log.trim().split("\n").map(x=>JSON.parse(x))
   const requests=rows.filter(x=>x.type==="notion.request"), finals=rows.filter(x=>x.type==="notion.final")
   assert.equal(rows.filter(x=>x.type==="local.tool.execution").length,0);
   assert.equal(requests.length,2);assert.equal(requests[0].conversation,requests[1].conversation);assert.equal(finals.length,2)
+  const models=new NotionModels();assert.equal(requests[0].model,models.resolve("gpt-5.4"));assert.equal(requests[1].model,models.resolve("claude-opus-4.6-medium"))
   const host=rows.filter(x=>x.type==="host.event"), deltas=host.filter(x=>x.event.type==="message.part.delta")
   assert.ok(deltas.some(x=>x.time<finals[0].time&&x.event.properties.delta.includes("LIVE_PROGRESS")),"standard host must receive public text before upstream completes")
   const parts=host.filter(x=>x.event.type==="message.part.updated").map(x=>({part:x.event.properties.part,time:x.time})), tools=parts.filter(x=>x.part.type==="tool")
