@@ -1,6 +1,6 @@
 import { readFile, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { createRequire } from "node:module"
 import { hash } from "./storage.js"
 import { resolveReasoningEffort } from "./effort.js"
@@ -58,5 +58,5 @@ export async function settings(directory: string, options: PluginOptions = {}, e
   return { root, publicUrl: url.href, tokenV2, account, stateBase, runtimeDir, model,
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     bun: options.bun ?? env.OPENCODE_MCP_BUN ?? bundledBun(), port, autoSetup: options.autoSetup !== false, includeUnlistedModels: options.includeUnlistedModels === true,
-    connectionName: `OpenCode ${basename(root)} [${hash(root).slice(0, 10)}]` }
+    connectionName: `OpenCode execution toolbox [${hash(url.href).slice(0, 10)}]` }
 }

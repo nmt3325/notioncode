@@ -29,16 +29,17 @@ import {appendFileSync} from 'node:fs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {join} from 'node:path';
 const trace=value=>appendFileSync(${JSON.stringify(trace)},JSON.stringify({...value,time:Date.now()})+'\\n');
-export default {id:'notion-live-host-fixture',server:async input=>{
+export default {id:'notion-live-host-fixture',server:async input=>{try{return await boot(input)}catch(error){trace({type:'plugin.error',message:String((error&&error.message)||error),stack:String((error&&error.stack)||'')});throw error}}};
+async function boot(input){
  const account={tokenV2:'LIVE_COOKIE_SECRET',userId:'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',spaceId:'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',userName:'Fixture',userEmail:'fixture@example.com',spaceName:'Fixture',spaceViewId:'cccccccc-cccc-4ccc-cccc-cccccccccccc',timezone:'UTC'};
- const records=[];let bearer='',mcp,revision=false;
+ const records=[];let bearer='',mcp,revision=false,executionScope;
  const manager={list:async()=>records,status:async()=>({status:'connected'}),
   add:async config=>{bearer=config.auth.token;const entry={...config,id:'dddddddd-dddd-4ddd-dddd-dddddddddddd',linked:true,enabledToolNames:null};records.push(entry);return entry},
   update:async(id,config)=>{if(config.auth)bearer=config.auth.token;Object.assign(records.find(x=>x.id===id),config);return records.find(x=>x.id===id)}};
  const tool=async(name,args)=>{
-  const result=await mcp.callTool({name,arguments:args});
+  const result=await mcp.callTool({name,arguments:{...executionScope,arguments:args}});
   let job=result.structuredContent??JSON.parse(result.content.find(x=>x.type==='text').text);
-  for(let i=0;i<40&&['running','cancelling'].includes(job.status);i++) {const r=await mcp.callTool({name:'opencode_job_result',arguments:{job_id:job.job_id,wait_seconds:1}});job=r.structuredContent??JSON.parse(r.content.find(x=>x.type==='text').text)}
+  for(let i=0;i<40&&['running','cancelling'].includes(job.status);i++) {const r=await mcp.callTool({name:'opencode_job_result',arguments:{...executionScope,job_id:job.job_id,wait_seconds:1}});job=r.structuredContent??JSON.parse(r.content.find(x=>x.type==='text').text)}
   trace({type:'native.result',name,status:job.status});return job;
  };
  const factory=config=>{
@@ -62,15 +63,15 @@ export default {id:'notion-live-host-fixture',server:async input=>{
    })().catch(error=>controller.error(error));
    return new Response(stream,{headers:{'content-type':'application/x-ndjson'}});
   });
-  return {client:{account:async()=>account,mcp:()=>manager},withTimeout:async(_ms,fn)=>fn(),send:input=>{revision=!input.fresh;return backend.send(input)},interrupt:id=>backend.interrupt(id)};
+  return {client:{account:async()=>account,mcp:()=>manager},withTimeout:async(_ms,fn)=>fn(),send:input=>{executionScope=input.executionScope;revision=!input.fresh;return backend.send(input)},interrupt:id=>backend.interrupt(id)};
  };
- const runtime=await startRuntime(input.directory,{publicUrl:['https:','','fixture.example','mcp'].join('/'),accountFile:${JSON.stringify(accountFile)},stateDir:${JSON.stringify(state)},runtimeDir:${JSON.stringify(source)},port:${port},autoSetup:false},factory);
- mcp=new Client({name:'mocked-notion-live',version:'1'});await mcp.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:${port}/mcp'),{requestInit:{headers:{Authorization:'Bearer '+bearer}}}));
+ const runtime=await startRuntime(input.directory,{publicUrl:['https:','','fixture.example','mcp'].join('/'),accountFile:${JSON.stringify(accountFile)},stateDir:${JSON.stringify(state)},runtimeDir:${JSON.stringify(source)},port:${port},autoSetup:false},factory);trace({type:'boot.runtime.ready'});
+ mcp=new Client({name:'mocked-notion-live',version:'1'});await mcp.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:${port}/mcp'),{requestInit:{headers:{Authorization:'Bearer '+bearer}}}));trace({type:'boot.mcp.ready'});
  const hooks=providerHooks(runtime.transport,async()=>{await mcp.close();await runtime.close()});
  hooks['tool.execute.before']=async input=>trace({type:'local.tool.execution',tool:input.tool});
  hooks.event=async({event})=>{if(['message.updated','message.part.updated','message.part.delta'].includes(event.type))trace({type:'host.event',event})};
  return attachLiveUI(input,runtime.transport,hooks);
-}};
+}
 `)
   await writeFile(join(workspace,"opencode.json"),JSON.stringify({plugin:[pathToFileURL(fixture).href]}))
   const env={PATH:process.env.PATH,HOME:home,XDG_CONFIG_HOME:join(home,"config"),XDG_DATA_HOME:join(home,"data"),XDG_STATE_HOME:join(home,"state"),XDG_CACHE_HOME:join(home,"cache"),
@@ -116,9 +117,18 @@ export default {id:'notion-live-host-fixture',server:async input=>{
   assert.deepEqual(texts,["LIVE_PROGRESS\n\nLIVE_FINAL [redacted] [redacted]","LIVE_REVISED_FINAL [redacted] [redacted]"])
   assert.equal(await readFile(join(workspace,"execution-count"),"utf8"),"xx","no duplicate native execution or local tool loop")
   assert.equal(await readFile(join(workspace,"live.txt"),"utf8"),"native write")
-  const accountDirs=await readdir(join(state,"accounts"));const secret=JSON.parse(await readFile(join(state,"accounts",accountDirs[0],"execution-secret.json"),"utf8")).token
-  assert.ok(!log.includes(secret));assert.doesNotMatch(log+first.stdout+second.stdout,/LIVE_COOKIE_SECRET|HIDDEN_REASONING_MARKER/)
+  const sharedDirs=await readdir(join(state,"shared"));const secretOf=async name=>JSON.parse(await readFile(join(state,"shared",sharedDirs[0],name),"utf8")).token
+  assert.equal(sharedDirs.length,1,"one shared service directory per public URL")
+  const secret=await secretOf("execution-secret.json"),control=await secretOf("control-secret.json")
+  assert.ok(!log.includes(secret)&&!log.includes(control),"shared secrets must stay out of the host log");assert.doesNotMatch(log+first.stdout+second.stdout,/LIVE_COOKIE_SECRET|HIDDEN_REASONING_MARKER/)
   assert.ok(!first.stdout.includes('"tool_calls"')&&!second.stdout.includes('"tool_calls"'))
+  const daemon=JSON.parse(await readFile(join(state,"shared",sharedDirs[0],"daemon.json"),"utf8"))
+  const control_rpc=async op=>fetch(`http://127.0.0.1:${daemon.port}/control`,{method:"POST",headers:{authorization:`Bearer ${control}`,"content-type":"application/json"},body:JSON.stringify({op})})
+  assert.equal((await control_rpc("status")).status,200,"the shared service must outlive both host processes so sequential runs reuse it")
+  assert.equal((await control_rpc("shutdown")).status,200,"an unowned shared service must shut down when asked")
+  let stopped=false
+  for(let i=0;i<100&&!stopped;i++){try{await control_rpc("status")}catch{stopped=true}if(!stopped)await new Promise(r=>setTimeout(r,50))}
+  assert.ok(stopped,"the shared service must stop after an explicit shutdown")
   console.log("PASS: real pinned OpenCode host receives live NDJSON text, native running/completed/error tool cards, safe results, exact assistant correlation, continuation, reported usage and no duplicate execution")
 } catch(error) {
   if(process.env.KEEP_LIVE_TEST_ARTIFACTS)console.error("Live host fixture retained:",temp)

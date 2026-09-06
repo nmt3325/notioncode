@@ -30,6 +30,6 @@ try {
  runtime=await startRuntime(root,{publicUrl:"https://manual-endpoint.example/mcp",accountFile,stateDir:join(temp,"state"),runtimeDir:join(temp,"fresh-runtime"),port},backend)
  assert.equal((await fetch(`http://127.0.0.1:${port}/healthz`)).status,200);assert.equal(records.length,1)
  const response=await runtime.transport.fetch("https://opencode-notion.invalid/v1/chat/completions",{method:"POST",headers:{"x-opencode-notion-session":"ses_package","x-opencode-notion-message":"msg_package"},body:JSON.stringify({model:"chat",messages:[{role:"user",content:"package check"}]})})
- assert.equal((await response.json()).choices[0].message.content,"package reply");await runtime.close();runtime=undefined
+ assert.equal((await response.json()).choices[0].message.content,"package reply");await runtime.close();await runtime.shared.stopIfUnused();runtime=undefined
  console.log("PASS: packed plugin, ignore-scripts production install, bundled Bun, automatic native setup, MCP startup and shutdown")
-} finally {await runtime?.close();await rm(temp,{recursive:true,force:true})}
+} finally {await runtime?.close();await runtime?.shared.stopIfUnused();await rm(temp,{recursive:true,force:true})}

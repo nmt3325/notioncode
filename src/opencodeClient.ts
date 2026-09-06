@@ -10,7 +10,7 @@ import { isTerminal, type JobView, type NativeTool } from "./protocol.js"
 
 const run = promisify(execFile)
 const FRAME_LIMIT = 16 * 1024 * 1024
-export interface ExecutionEvent { type: "start" | "update"; job: JobView; input?: Record<string, unknown> }
+export interface ExecutionEvent { type: "start" | "update"; job: JobView; input?: Record<string, unknown>; scope?: import("./shared/hub.js").ExecutionScope }
 interface Job extends JobView { timer?: NodeJS.Timeout; cancelReason?: string; bytes: number }
 function inside(root: string, target: string): boolean {
   const path = relative(root, target)
@@ -236,16 +236,22 @@ export class OpencodeClient {
       this.notify(id)
     }
   }
+  private stopped?: Promise<void>
   async stop(): Promise<void> {
-    if (this.stopping) return
+    // Every caller awaits the same termination; an early return would let a
+    // replacement worker reuse this state directory while this one still runs.
+    if (this.stopped) return this.stopped
     this.stopping = true
-    for (const job of this.jobs.values()) clearTimeout(job.timer)
-    const child = this.child
-    if (!child || child.exitCode !== null || child.signalCode !== null) return
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => { child.kill("SIGKILL") }, 5000)
-      child.once("exit", () => { clearTimeout(timer); resolve() })
-      child.stdin.end()
-    })
+    this.stopped = (async () => {
+      for (const job of this.jobs.values()) clearTimeout(job.timer)
+      const child = this.child
+      if (!child || child.exitCode !== null || child.signalCode !== null) return
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => { child.kill("SIGKILL") }, 5000)
+        child.once("exit", () => { clearTimeout(timer); resolve() })
+        child.stdin.end()
+      })
+    })()
+    return this.stopped
   }
 }

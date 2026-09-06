@@ -30,6 +30,18 @@ The shipped registry includes all **41 production-pickable entries** (including 
 
 See [live text and tool visibility](docs/live-ui.md) and [usage provenance and limitations](docs/usage-ui.md). Model selection remains the separate 0.4.0 milestone; 0.5.0 adds the display integration without replacing OpenCode's UI or upstream source.
 
+## One shared connection with per-run environment and thread routing (0.6.0)
+
+Earlier versions registered a Notion connection and an MCP server per project, and a project could only advance one turn at a time. 0.6.0 keeps **one shared connection** and selects the target at call time: every native and control tool takes `env_id`, `thread_id`, and `turn_id` next to the untouched native `arguments`.
+
+- One shared daemon per public URL. Every start-up that uses the same URL, port, and state directory attaches to it instead of creating a project-specific connection. A finishing run only releases its claim, and the daemon stops itself once nothing owns it.
+- One thread is one AI with one in-flight turn. Different threads run concurrently and can edit different files at the same time, each with its own native worker, permission queue, tool cards, and conversation state.
+- Job listing, waiting, cancellation, and permission replies are scoped to the calling thread's current turn, so ending or interrupting one thread never disturbs another.
+- Only `/mcp` is exposed. Registration, turn boundaries, and event delivery use a loopback-only `/control` endpoint with a separate private bearer that never reaches a model prompt.
+- Concurrent edits to the *same* file are still not arbitrated: give each thread its own files.
+
+See [`docs/shared-execution.md`](docs/shared-execution.md) for the request envelope, limits, and the migration steps from 0.5.x.
+
 ## 自動ビルド（GitHub Actions）
 
 [![Build](https://github.com/nmt3325/notioncode/actions/workflows/build.yml/badge.svg)](https://github.com/nmt3325/notioncode/actions/workflows/build.yml)
