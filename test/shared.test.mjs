@@ -220,3 +220,57 @@ test('the shared daemon launches with the resolved Bun runtime, never the host e
   assert.ok(!/spawn\(\s*process\.execPath/.test(source), 'the daemon must not be spawned with the host executable')
   assert.match(source, /spawn\(\s*s\.bun\s*,/)
 })
+
+test('tool activity renews the owner lease so a busy AI is never reaped', async t => {
+  const f = await hubFixture(t, { ownerLeaseMs: 60 })
+  const a = scope('thread_a'), b = scope('thread_b', 'turn_1', 'env_b')
+  await f.hub.begin('owner_a', a); await f.hub.begin('owner_b', b)
+  const job = f.hub.startJob(a, 'bash', { command: 'long' })
+  // Only control-plane traffic used to renew the lease, so an AI whose event
+  // poll stalled had its running threads torn down mid-execution.
+  for (let i = 0; i < 4; i++) { await delay(40); assert.equal(f.hub.list(a).length, 1); await f.hub.reap() }
+  assert.equal(f.hub.list(a)[0].job_id, job)
+  assert.equal(f.hub.ownerCount, 1)
+  assert.throws(() => f.hub.list(b), /Unknown or unavailable execution thread/)
+})
+
+test('the shared service reports the package version, refuses proxied control traffic and idles out only when nothing is live', async t => {
+  const { readFile } = await import('node:fs/promises')
+  const { createServer: createTcpServer } = await import('node:net')
+  const { runSharedHttp } = await import('../dist/shared/server.js')
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
+  const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+  const freePort = () => new Promise(resolve => { const probe = createTcpServer(); probe.listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)) }) })
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  const credentials = { mcpToken: 'execution-credential-for-shared-http-tests', controlToken: 'control-credential-for-shared-http-tests', identity: 'unit' }
+  const live = await hubFixture(t), port = await freePort()
+  const service = await runSharedHttp(live.hub, { ...credentials, port, idleMs: 10 })
+  let running = true
+  void service.closed.then(() => { running = false })
+  t.after(() => service.close())
+  const health = await (await fetch(`http://127.0.0.1:${port}/healthz`)).json()
+  assert.equal(health.version, pkg.version)
+  for (const file of ['../dist/index.js', '../dist/tools.js', '../dist/shared/server.js']) {
+    const source = await readFile(new URL(file, import.meta.url), 'utf8')
+    assert.ok(!/version: "\d+\.\d+\.\d+"/.test(source), `${file} must take its version from package.json`)
+  }
+  const control = (headers = {}) => fetch(`http://127.0.0.1:${port}/control`, { method: 'POST', body: JSON.stringify({ op: 'status' }),
+    headers: { authorization: `Bearer ${credentials.controlToken}`, 'content-type': 'application/json', ...headers } })
+  // The tunnel publishes /mcp, but claims, fences and shutdown must stay local.
+  assert.equal((await control({ 'x-forwarded-for': '203.0.113.9' })).status, 403)
+  assert.equal((await control({ 'cf-connecting-ip': '203.0.113.9' })).status, 403)
+  assert.equal((await control()).status, 200)
+  const client = new Client({ name: 'idle-guard', version: '1' })
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { requestInit: { headers: { authorization: `Bearer ${credentials.mcpToken}` } } }))
+  t.after(() => client.close().catch(() => {}))
+  await live.hub.release('owner_a'); await live.hub.release('owner_b')
+  // The reaper sweeps every five seconds; a connected AI must survive it.
+  await delay(7000)
+  assert.equal(running, true)
+  assert.equal((await fetch(`http://127.0.0.1:${port}/healthz`)).status, 200)
+  const spare = await hubFixture(t), sparePort = await freePort()
+  const unused = await runSharedHttp(spare.hub, { ...credentials, port: sparePort, idleMs: 10 })
+  await spare.hub.release('owner_a'); await spare.hub.release('owner_b')
+  await unused.closed
+})
+

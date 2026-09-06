@@ -1,11 +1,10 @@
 import { readFile, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
-import { createRequire } from "node:module"
 import { hash } from "./storage.js"
 import { resolveReasoningEffort } from "./effort.js"
 import { normalizeModelName } from "../vendor/notion-ai/models.js"
-import { UPSTREAM } from "../config.js"
+import { bundledBun, UPSTREAM } from "../config.js"
 export interface PluginOptions { publicUrl?: string; accountFile?: string; spaceId?: string; model?: string; reasoningEffort?: string; stateDir?: string; runtimeDir?: string; bun?: string; port?: number; autoSetup?: boolean; includeUnlistedModels?: boolean }
 export interface Settings {
   root: string; publicUrl: string; tokenV2: string; account: Record<string, string>
@@ -16,18 +15,9 @@ export function outside(root: string, target: string): boolean {
   const p = relative(root, target)
   return isAbsolute(p) || p === ".." || p.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
 }
-export function bundledBun(): string {
-  const require = createRequire(import.meta.url)
-  const arch = process.arch === "arm64" ? "aarch64" : process.arch
-  const os = process.platform === "win32" ? "windows" : process.platform
-  if (!["linux", "darwin", "windows"].includes(os) || !["aarch64", "x64"].includes(arch)) throw new Error("Set OPENCODE_MCP_BUN to a supported Bun 1.3.14 executable")
-  let suffix = arch === "x64" ? "-baseline" : ""
-  if (os === "linux") {
-    const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined
-    if (!report?.header?.glibcVersionRuntime) suffix = `-musl${suffix}`
-  }
-  return join(dirname(require.resolve(`@oven/bun-${os}-${arch}${suffix}/package.json`)), "bin", os === "windows" ? "bun.exe" : "bun")
-}
+// One Bun resolver for the package: the plugin re-exports the core one so the
+// toolbox and the plugin can never disagree about which Bun runs.
+export { bundledBun }
 export async function settings(directory: string, options: PluginOptions = {}, env = process.env): Promise<Settings> {
   if (options.includeUnlistedModels !== undefined && typeof options.includeUnlistedModels !== "boolean") throw new Error("includeUnlistedModels must be a boolean")
   const root = await realpath(directory)

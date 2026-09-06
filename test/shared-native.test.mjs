@@ -19,7 +19,7 @@ test('shared HTTP MCP executes independent native threads on a single endpoint',
   await mkdir(root); await mkdir(otherRoot)
   await Promise.all(['a', 'b'].map(name => writeFile(join(root, `${name}.txt`), `${name} before\n`)))
   const config = loadConfig({ OPENCODE_MCP_ROOT: root, OPENCODE_MCP_RUNTIME_DIR: process.env.OPENCODE_MCP_RUNTIME_DIR ?? resolve('.opencode-runtime'),
-    OPENCODE_MCP_BUN: process.env.OPENCODE_MCP_BUN ?? 'bun', OPENCODE_MCP_STATE_DIR: join(dir, 'state'), OPENCODE_MCP_WAIT_MAX_SECONDS: '1',
+    ...(process.env.OPENCODE_MCP_BUN ? { OPENCODE_MCP_BUN: process.env.OPENCODE_MCP_BUN } : {}), OPENCODE_MCP_STATE_DIR: join(dir, 'state'), OPENCODE_MCP_WAIT_MAX_SECONDS: '1',
     OPENCODE_MCP_PERMISSIONS: JSON.stringify({ '*': 'allow', edit: 'ask' }) })
   const hub = new ExecutionHub(config), token = 'execution-test-credential-'.repeat(3), controlToken = 'private-control-test-credential-'.repeat(3), clients = []
   let http

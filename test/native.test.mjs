@@ -70,7 +70,7 @@ before(async () => {
   config = loadConfig({
     OPENCODE_MCP_ROOT: root,
     OPENCODE_MCP_RUNTIME_DIR: process.env.OPENCODE_MCP_RUNTIME_DIR ?? resolve(".opencode-runtime"),
-    OPENCODE_MCP_BUN: process.env.OPENCODE_MCP_BUN ?? "bun",
+    ...(process.env.OPENCODE_MCP_BUN ? { OPENCODE_MCP_BUN: process.env.OPENCODE_MCP_BUN } : {}),
     OPENCODE_MCP_STATE_DIR: join(temporary, "state"),
     OPENCODE_MCP_WAIT_MAX_SECONDS: "1",
   })

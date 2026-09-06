@@ -1,10 +1,31 @@
 import { createHash } from "node:crypto"
+import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { z } from "zod"
 
 export const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
+// One version literal for the package: /healthz and the MCP handshake must not
+// drift away from package.json again.
+export const VERSION: string = (createRequire(import.meta.url)("../package.json") as { version: string }).version
+// The package ships Bun as a platform dependency, so nothing here may require
+// a Bun on PATH; an unsupported platform still falls back to a PATH lookup.
+export function bundledBun(): string {
+  const require = createRequire(import.meta.url)
+  const arch = process.arch === "arm64" ? "aarch64" : process.arch
+  const os = process.platform === "win32" ? "windows" : process.platform
+  if (!["linux", "darwin", "windows"].includes(os) || !["aarch64", "x64"].includes(arch)) throw new Error(`Set OPENCODE_MCP_BUN to a supported Bun ${UPSTREAM.bun} executable`)
+  let suffix = arch === "x64" ? "-baseline" : ""
+  if (os === "linux") {
+    const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined
+    if (!report?.header?.glibcVersionRuntime) suffix = `-musl${suffix}`
+  }
+  return join(dirname(require.resolve(`@oven/bun-${os}-${arch}${suffix}/package.json`)), "bin", os === "windows" ? "bun.exe" : "bun")
+}
+function installedBun(): string {
+  try { return bundledBun() } catch { return "bun" }
+}
 export const UPSTREAM = {
   repository: "https://github.com/anomalyco/opencode.git",
   version: "1.18.29",
@@ -62,7 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig {
     root,
     runtimeDir: resolve(env.OPENCODE_MCP_RUNTIME_DIR ?? join(PACKAGE_ROOT, ".opencode-runtime")),
     stateDir: resolve(env.OPENCODE_MCP_STATE_DIR ?? join(homedir(), ".local", "state", "opencode-mcp-bridge", key)),
-    bun: env.OPENCODE_MCP_BUN ?? "bun",
+    bun: env.OPENCODE_MCP_BUN ?? installedBun(),
     httpHost: env.OPENCODE_MCP_HOST ?? "127.0.0.1",
     httpPort: integer(env, "OPENCODE_MCP_PORT", 8787, 1, 65535),
     mcpToken: env.OPENCODE_MCP_TOKEN,

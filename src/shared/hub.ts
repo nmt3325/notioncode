@@ -114,10 +114,15 @@ export class ExecutionHub {
   private thread(scope: ExecutionScope, active = false): Thread {
     parseScope(scope as unknown as Record<string, unknown>)
     const thread = this.threads.get(threadKey(scope))
-    if (this.closing || !thread || thread.faulted) throw new Error("Unknown or unavailable execution thread")
+    if (this.closing || !thread || thread.faulted) throw new Error("Unknown or unavailable execution thread; begin this env_id and thread_id again, or use a new thread_id if it was quarantined")
     if (!thread.used.has(scope.turn_id)) throw new Error("Unknown execution turn")
     if (active && (thread.active !== scope.turn_id || thread.closing)) throw new Error("Execution turn is not active; late or cancelled requests are refused")
     thread.touched = Date.now()
+    // Executing the tools of an owner proves that client is alive, so execution
+    // renews its lease too. Otherwise a long job outlives the lease and healthy
+    // threads are reaped mid-run whenever the client event poll goes quiet.
+    const owner = this.owners.get(thread.owner)
+    if (owner && !owner.released) owner.touched = thread.touched
     return thread
   }
   private jobThread(scope: ExecutionScope, id: string): Thread {
