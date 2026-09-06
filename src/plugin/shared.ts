@@ -127,7 +127,9 @@ export async function connectShared(s: Settings, initialConfig: BridgeConfig): P
       const processState = join(directory, "process")
       for (const sub of ["", "home", "home/tmp", "home/cache"]) await privateDirectory(join(processState, sub))
       const log = await open(join(directory, "daemon.log"), "a", 0o600)
-      const child = spawn(process.execPath, [join(PACKAGE_ROOT, "dist/shared/daemon.js"), file], {
+      // process.execPath is the compiled opencode executable inside the host, and handing
+      // it a script path only prints the OpenCode CLI help, so use the resolved runtime.
+      const child = spawn(s.bun, [join(PACKAGE_ROOT, "dist/shared/daemon.js"), file], {
         cwd: PACKAGE_ROOT, detached: true, stdio: ["ignore", log.fd, log.fd],
         env: workerEnvironment({ ...config.bridge, stateDir: processState }),
       })

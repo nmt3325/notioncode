@@ -211,3 +211,12 @@ test('an unreachable shared service is recognized under both node and bun error 
   assert.equal(unreachable(new Error('Other OpenCode clients still own this shared service; refusing shutdown')), false)
   assert.equal(unreachable(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })), false)
 })
+
+test('the shared daemon launches with the resolved Bun runtime, never the host executable', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const source = await readFile(new URL('../dist/plugin/shared.js', import.meta.url), 'utf8')
+  // A compiled opencode executable is process.execPath inside the host; giving it a script
+  // path only prints the CLI help, so the daemon must start with the configured runtime.
+  assert.ok(!/spawn\(\s*process\.execPath/.test(source), 'the daemon must not be spawned with the host executable')
+  assert.match(source, /spawn\(\s*s\.bun\s*,/)
+})
