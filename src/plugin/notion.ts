@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { NotionClient } from "../vendor/notion-ai/notion-client.js"
 import type { NotionConfig } from "../vendor/notion-ai/config.js"
 import type { Settings } from "./config.js"
-export interface ChatInput { prompt: string; model?: string; conversationId: string; fresh: boolean; signal: AbortSignal }
+export interface ChatInput { prompt: string; conversationId: string; fresh: boolean; signal: AbortSignal; model?: string; reasoningEffort?: string; onText?: (snapshot: string) => void }
 export interface ChatBackend { send(input: ChatInput): Promise<string>; interrupt(conversationId: string): Promise<void> }
 export function notionConfig(s: Settings, stateDir?: string): NotionConfig {
   return {
@@ -31,7 +31,9 @@ export class NotionBackend implements ChatBackend {
     input.signal.throwIfAborted()
     return this.signal.run(input.signal, async () => {
       const result = await this.client.chat({ prompt: input.prompt, readOnly: false,
-        ...(input.model ? { model: input.model } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
+        ...(input.onText ? { onText: input.onText } : {}),
         ...(input.fresh ? { newConversationId: input.conversationId } : { conversationId: input.conversationId }) })
       if (result.conversationId !== input.conversationId) throw new Error("Notion returned a different conversation; refusing to remap silently")
       return result.text

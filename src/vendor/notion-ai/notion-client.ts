@@ -1,3 +1,4 @@
+import { inferenceLines, inferenceStream, type TextObserver } from "./inference-stream.js";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, extname } from "node:path";
 import { isIP } from "node:net";
@@ -8,7 +9,7 @@ import { ChatStateStore } from "./chat-jobs.js";
 import { normalizeModelName, normalizeReasoningEffort } from "./models.js";
 import { McpConnectionManager } from "./mcp-connections.js";
 import { prepareAttachmentInput, readResponseBuffer, writeAttachmentOutput, type AttachmentInput, type PreparedAttachment } from "./attachments.js";
-import { agentTranscriptError, applyAgentTranscriptPatches, createAgentTranscriptState, isAgentTranscriptTurnComplete, latestAgentTranscriptText } from "./agent-transcript.js";
+import { agentTranscriptError, applyAgentTranscriptPatches, createAgentTranscriptState, isAgentTranscriptTurnComplete, latestAgentTranscriptText, agentTranscriptVisibleText } from "./agent-transcript.js";
 import type { InterruptResult } from "./types.js";
 import type { KeepAwakeDefaults } from "./keep-awake.js";
 
@@ -26,6 +27,8 @@ interface RecoveredThreadSteps { configId?: string; contextId?: string; updatedC
 interface ThreadLookup { page: TranscriptPage; transcript: Record<string, unknown> | null; thread: Record<string, unknown> }
 
 interface ChatOptions {
+  /** Cumulative public assistant text only; never raw inference events or thinking. */
+  onText?: TextObserver | undefined;
   prompt: string;
   model?: string | undefined;
   reasoningEffort?: string | undefined;
@@ -333,11 +336,7 @@ function cleanLangTags(text: string): string { return text.replace(/<lang\b[^>]*
 
 function normalizeStreamLine(line: string): string { const trimmed = line.trim(); if (!trimmed || trimmed.startsWith("event:") || trimmed.startsWith(":")) return ""; if (trimmed.startsWith("data:")) { const data = trimmed.slice(5).trim(); return data === "[DONE]" ? "" : data; } return trimmed; }
 
-export function parseInferenceLines(lines: string[]): ParsedInferenceStream {
-  let text = ""; let inputTokens = 0; let outputTokens = 0; const eventTypes: Record<string, number> = {}; const patchTypes = new Map<string, string>(); const patchCounts = new Map<string, number>();
-  for (const rawLine of lines) { const line = normalizeStreamLine(rawLine); if (!line) continue; let event: JsonObject; try { event = object(JSON.parse(line)); } catch { continue; } const type = asString(event.type, "unknown"); eventTypes[type] = (eventTypes[type] ?? 0) + 1; if (type === "error") throw new Error(`Notion AI error: ${asString(event.message, "unknown error")}`); if (type === "premium-feature-unavailable") { const availability = object(event.featureAvailability); const limit = object(availability.limit); const current = limit.current; const total = limit.total; const detail = typeof current === "number" && typeof total === "number" ? ` (AI credit limit reached: ${current}/${total})` : ""; throw new Error(`Notion AI premium feature unavailable${detail}`); } if (type === "agent-inference") { for (const rawEntry of Array.isArray(event.value) ? event.value : []) { const entry = object(rawEntry); if (entry.type === "text" && typeof entry.content === "string") { text = entry.content; } } if (typeof event.inputTokens === "number") inputTokens += event.inputTokens; if (typeof event.outputTokens === "number") outputTokens += event.outputTokens; continue; } if (type !== "patch") continue; for (const rawOperation of Array.isArray(event.v) ? event.v : []) { const operation = object(rawOperation); const op = asString(operation.o); const path = asString(operation.p); if (op === "a" && path.includes("/value/-")) { const entry = object(operation.v); const statePrefix = path.slice(0, path.indexOf("/value/")); const count = patchCounts.get(statePrefix) ?? 0; patchTypes.set(`${statePrefix}/value/${count}`, asString(entry.type)); patchCounts.set(statePrefix, count + 1); } if (op === "a" && path.endsWith("/inputTokens") && typeof operation.v === "number") { inputTokens += operation.v; } if (op === "a" && path.endsWith("/outputTokens") && typeof operation.v === "number") { outputTokens += operation.v; } if (!path.includes("content") || typeof operation.v !== "string") continue; const contentIndex = path.lastIndexOf("/content"); const entryType = contentIndex >= 0 ? patchTypes.get(path.slice(0, contentIndex)) : "text"; if (entryType === "thinking" || entryType === "tool_use") continue; if (op === "x") text += operation.v; else if (op === "p") text = text.replace(/<lang[^>]*\/>/g, "").replace(operation.v.includes("<lang") ? /<lang[^>]*\/>/g : /$/, operation.v); } }
-  return { text: cleanLangTags(text), inputTokens, outputTokens, eventTypes };
-}
+export const parseInferenceLines = inferenceLines;
 
 /** Explains a text-less inference stream instead of reporting a bare "empty response". */
 export function emptyAnswerMessage(spaceId: string, session: { rehydrated?: boolean | undefined }, eventTypes: Record<string, number>): string {
@@ -350,7 +349,7 @@ export function emptyAnswerMessage(spaceId: string, session: { rehydrated?: bool
 
 function applyPatchReplacement(current: string, replacement: string): string { const langIndex = current.lastIndexOf("<lang"); return langIndex >= 0 ? current.slice(0, langIndex) + replacement : current + replacement; }
 
-export async function parseInferenceStream(stream: ReadableStream<Uint8Array>): Promise<ParsedInferenceStream> { const reader = stream.getReader(); const decoder = new TextDecoder(); let buffer = ""; const lines: string[] = []; while (true) { const { value, done } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); let newline = buffer.indexOf("\n"); while (newline >= 0) { lines.push(buffer.slice(0, newline).trimEnd()); buffer = buffer.slice(newline + 1); newline = buffer.indexOf("\n"); } } buffer += decoder.decode(); if (buffer.trim()) lines.push(buffer.trim()); return parseInferenceLines(lines); }
+export const parseInferenceStream = inferenceStream;
 
 function buildCookie(account: AccountContext): string { if (account.fullCookie) return account.fullCookie; const userIdNoDash = account.userId.replaceAll("-", ""); return [`notion_browser_id=${account.browserId}`, `device_id=${account.deviceId}`, `notion_user_id=${account.userId}`, "notion_locale=en-US/legacy", `notion_users=[%22${account.userId}%22]`, "notion_check_cookie_consent=false", "notion_cookie_sync_completed=%7B%22completed%22%3Atrue%2C%22version%22%3A4%7D", `_cioid=${userIdNoDash}`, `token_v2=${account.tokenV2}`].join("; "); }
 
@@ -926,10 +925,11 @@ export class NotionClient {
         transport: fileIds.length > 0 ? "agent_service" : "inference_transcript"
       };
     }
-    const reasoningEffort = requestedEffort ?? session.reasoningEffort;
     // A rehydrated session carries the model Notion recorded on the thread, so a resumed turn keeps
     // answering with that model unless the caller names a different one.
     const effectiveModel = session.rehydrated === true && !options.model ? session.model || model : model;
+    // A different model must not inherit the previous model's reasoning setting.
+    const reasoningEffort = requestedEffort ?? (effectiveModel === session.model ? session.reasoningEffort : undefined);
     if (session.transport === "agent_service") {
       if (transcriptFiles.length > 0) throw new Error("Inference-transcript attachment handles cannot be used in an Agent Service conversation");
       return this.agentServiceChat(account, effectiveModel, session, options, fileIds, reasoningEffort);
@@ -940,7 +940,7 @@ export class NotionClient {
     const body = this.buildInferenceBody(account, prompt, effectiveModel, options.webSearch ?? this.config.defaultWebSearch, options.workspaceSearch ?? this.config.defaultWorkspaceSearch, options.readOnly ?? this.config.defaultReadOnly, session, transcriptFiles, reasoningEffort);
     const response = await this.request("runInferenceTranscript", body, true);
     if (!response.body) throw new Error("runInferenceTranscript returned no response stream");
-    const parsed = await parseInferenceStream(response.body);
+    const parsed = await parseInferenceStream(response.body, options.onText);
     if (!parsed.text.trim()) throw new Error(emptyAnswerMessage(account.spaceId, session, parsed.eventTypes));
     for (const file of transcriptFiles) file.usedInChat = true;
     session.turnCount += 1; session.updatedConfigIds.push(randomUUID()); session.model = effectiveModel; session.reasoningEffort = reasoningEffort; this.rememberSession(session);
@@ -1467,7 +1467,7 @@ export class NotionClient {
     throw new Error("getThreadTranscript exceeded 100 pages");
   }
 
-  private async waitForAgentServiceTurn(account: AccountContext, threadId: string, initialCursor: unknown): Promise<string> {
+  private async waitForAgentServiceTurn(account: AccountContext, threadId: string, initialCursor: unknown, onText?: TextObserver): Promise<string> {
     const state = createAgentTranscriptState();
     const deadline = Date.now() + this.config.requestTimeoutMs;
     let cursor = initialCursor;
@@ -1482,7 +1482,8 @@ export class NotionClient {
       applyAgentTranscriptPatches(state, page.patches);
       const error = agentTranscriptError(state);
       if (error) throw new Error(`Notion Agent Service error: ${error}`);
-      const text = latestAgentTranscriptText(state);
+      const text = agentTranscriptVisibleText(state);
+      onText?.(text);
       if (text && isAgentTranscriptTurnComplete(state)) return text;
       const session = Object.keys(object(page.session)).length > 0 ? object(page.session) : state.session ?? {};
       const sessionStatus = asString(session.status);
@@ -1528,7 +1529,7 @@ export class NotionClient {
         clientMessageId
       });
     }
-    const text = await this.waitForAgentServiceTurn(account, session.threadId, cursor);
+    const text = await this.waitForAgentServiceTurn(account, session.threadId, cursor, options.onText);
     if (!text.trim()) throw new Error("Notion Agent Service returned an empty response");
     session.turnCount += 1;
     session.model = model;

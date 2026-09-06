@@ -11,6 +11,7 @@ import { exclusiveLock, hash, Journal, mcpSecret, privateDirectory, readJson, sa
 import { NotionBackend, notionConfig } from "./notion.js"
 import { NotionTransport } from "./transport.js"
 import { NotionModels } from "./models.js"
+import { secretRedactor } from "./redact.js"
 const execute = promisify(execFile)
 export async function registerConnection(manager: ReturnType<NotionBackend["client"]["mcp"]>, name: string, url: string, token: string, file: string): Promise<void> {
   const record = await readJson<{ id?: string; credentialHash?: string }>(file, {})
@@ -53,7 +54,7 @@ export async function startRuntime(directory: string, options: PluginOptions = {
   const releaseEndpoint = await exclusiveLock(join(s.stateBase, "locks", `${hash(s.publicUrl)}.lock`))
   let releaseRoot: (() => Promise<void>) | undefined, closeHttp: (() => Promise<void>) | undefined
   let client: OpencodeClient | undefined, secret = ""
-  const redact = (text: string) => { let safe = text.split(s.tokenV2).join("[redacted]"); if (secret) safe = safe.split(secret).join("[redacted]"); return safe }
+  const redact = secretRedactor(() => [s.tokenV2, secret])
   try {
     releaseRoot = await exclusiveLock(join(s.stateBase, "locks", `root-${hash(s.root)}.lock`))
     const probe = backendFactory(notionConfig(s)), account = await probe.withTimeout(30000, () => probe.client.account())
@@ -83,11 +84,12 @@ export async function startRuntime(directory: string, options: PluginOptions = {
       `This conversation is displayed in OpenCode. For local coding work use only the execution MCP connection named ${JSON.stringify(s.connectionName)}. Its workspace is ${JSON.stringify(s.root)}. Do not substitute another project's execution connection. You own reasoning and tool selection; OpenCode only displays your answer. Tools on this dedicated connection are authorized for automatic execution.`, redact,
       async () => { for (const job of client!.list()) if (!isTerminal(job.status)) client!.cancel(job.job_id) },
       new NotionModels(s.model, s.includeUnlistedModels))
+    const unobserve = client.observe(event => transport.observeExecution(event))
     let closed = false
     return { transport, close: async () => {
       if (closed) return; closed = true
       try { await transport.close() }
-      finally { try { await closeHttp!() } finally { try { await releaseRoot!() } finally { await releaseEndpoint() } } }
+      finally { try { await closeHttp!() } finally { unobserve(); try { await releaseRoot!() } finally { await releaseEndpoint() } } }
     } }
   } catch (error) {
     if (closeHttp) await closeHttp().catch(() => {}); else await client?.stop().catch(() => {})
