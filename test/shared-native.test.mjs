@@ -9,7 +9,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ExecutionHub } from '../dist/shared/hub.js'
 import { runSharedHttp } from '../dist/shared/server.js'
 import { SharedConnection } from '../dist/plugin/shared.js'
-import { loadConfig, NATIVE_TOOL_IDS } from '../dist/config.js'
+import { loadConfig, NATIVE_TOOL_IDS, OPTIONAL_NATIVE_TOOL_IDS } from '../dist/config.js'
 const terminal = job => ['completed', 'failed', 'cancelled'].includes(job.status)
 const unpack = result => result.structuredContent ?? JSON.parse(result.content.find(x => x.type === 'text').text)
 const exists = path => access(path).then(() => true, () => false)
@@ -43,11 +43,14 @@ test('shared HTTP MCP executes independent native threads on a single endpoint',
   async function complete(connection, scope, name, args) { const job = await finish(connection, scope, await call(connection, scope, name, args), true); assert.equal(job.status, 'completed', JSON.stringify(job)); return job }
   await t.test('catalog retains native schemas inside a required scope envelope; control credentials stay separate', async () => {
     const catalog = (await ca.listTools()).tools
-    for (const name of NATIVE_TOOL_IDS) {
+    for (const name of NATIVE_TOOL_IDS.filter(id => !OPTIONAL_NATIVE_TOOL_IDS.includes(id))) {
       const tool = catalog.find(x => x.name === name)
+      assert.ok(tool, name)
       assert.deepEqual(tool.inputSchema.required, ['env_id', 'thread_id', 'turn_id', 'arguments'])
       assert.deepEqual(tool.inputSchema.properties.arguments, hub.tools().find(x => x.name === name).inputSchema)
     }
+    assert.deepEqual(catalog.find(x => x.name === 'apply_patch').inputSchema.properties.arguments.required, ['patchText'])
+    assert.ok(!catalog.some(x => OPTIONAL_NATIVE_TOOL_IDS.includes(x.name)))
     assert.equal((await ca.callTool({ name: 'bash', arguments: { arguments: { command: 'must not run' } } })).isError, true)
     assert.equal((await ca.callTool({ name: 'opencode_job_list', arguments: { ...a, thread_id: 'unknown' } })).isError, true)
     assert.equal((await fetch(`${url}/control`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: '{"op":"status"}' })).status, 401)

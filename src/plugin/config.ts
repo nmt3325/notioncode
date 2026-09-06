@@ -5,11 +5,11 @@ import { hash } from "./storage.js"
 import { resolveReasoningEffort } from "./effort.js"
 import { normalizeModelName } from "../vendor/notion-ai/models.js"
 import { bundledBun, UPSTREAM } from "../config.js"
-export interface PluginOptions { publicUrl?: string; accountFile?: string; spaceId?: string; model?: string; reasoningEffort?: string; stateDir?: string; runtimeDir?: string; bun?: string; port?: number; autoSetup?: boolean; includeUnlistedModels?: boolean }
+export interface PluginOptions { publicUrl?: string; accountFile?: string; spaceId?: string; model?: string; reasoningEffort?: string; stateDir?: string; runtimeDir?: string; bun?: string; port?: number; autoSetup?: boolean; includeUnlistedModels?: boolean; lsp?: boolean }
 export interface Settings {
   root: string; publicUrl: string; tokenV2: string; account: Record<string, string>
   model: string; reasoningEffort?: string; stateBase: string; runtimeDir: string; bun: string; port: number
-  autoSetup: boolean; includeUnlistedModels: boolean; connectionName: string
+  autoSetup: boolean; includeUnlistedModels: boolean; lsp: boolean; connectionName: string
 }
 export function outside(root: string, target: string): boolean {
   const p = relative(root, target)
@@ -20,6 +20,7 @@ export function outside(root: string, target: string): boolean {
 export { bundledBun }
 export async function settings(directory: string, options: PluginOptions = {}, env = process.env): Promise<Settings> {
   if (options.includeUnlistedModels !== undefined && typeof options.includeUnlistedModels !== "boolean") throw new Error("includeUnlistedModels must be a boolean")
+  if (options.lsp !== undefined && typeof options.lsp !== "boolean") throw new Error("lsp must be a boolean")
   const root = await realpath(directory)
   if (dirname(root) === root) throw new Error("A filesystem root cannot be the execution workspace")
   const raw = options.publicUrl ?? env.OPENCODE_NOTION_MCP_URL
@@ -43,10 +44,15 @@ export async function settings(directory: string, options: PluginOptions = {}, e
   if (!outside(root, stateBase) || !outside(root, runtimeDir)) throw new Error("Plugin state and runtime must be outside the editable workspace")
   const port = options.port ?? Number(env.OPENCODE_MCP_PORT ?? 8787)
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("MCP port must be between 1 and 65535")
+  // Language-server operations stay opt-in: they only work where language
+  // servers are already installed, because runtime downloads stay disabled.
+  const lspFlag = env.OPENCODE_MCP_LSP ?? "false"
+  if (!["true", "false", "1", "0"].includes(lspFlag)) throw new Error("OPENCODE_MCP_LSP must be true or false")
+  const lsp = options.lsp ?? (lspFlag === "true" || lspFlag === "1")
   const model = options.model ?? env.NOTION_DEFAULT_MODEL ?? "default"
   const reasoningEffort = resolveReasoningEffort(normalizeModelName(model, "default"), options.reasoningEffort !== undefined ? options.reasoningEffort : env.NOTION_REASONING_EFFORT)
   return { root, publicUrl: url.href, tokenV2, account, stateBase, runtimeDir, model,
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
-    bun: options.bun ?? env.OPENCODE_MCP_BUN ?? bundledBun(), port, autoSetup: options.autoSetup !== false, includeUnlistedModels: options.includeUnlistedModels === true,
+    bun: options.bun ?? env.OPENCODE_MCP_BUN ?? bundledBun(), port, lsp, autoSetup: options.autoSetup !== false, includeUnlistedModels: options.includeUnlistedModels === true,
     connectionName: `OpenCode execution toolbox [${hash(url.href).slice(0, 10)}]` }
 }

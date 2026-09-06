@@ -116,7 +116,9 @@ export async function connectShared(s: Settings, initialConfig: BridgeConfig): P
     const mcpToken = await mcpSecret(join(directory, "execution-secret.json"))
     const controlToken = await mcpSecret(join(directory, "control-secret.json"))
     const parts = await Promise.all(["dist/shared/daemon.js", "dist/shared/hub.js", "dist/shared/server.js", "dist/config.js", "dist/opencodeClient.js", "runtime/native-worker.ts", "package.json"].map(file => readFile(join(PACKAGE_ROOT, file))))
-    const identity = hash(JSON.stringify({ code: parts.map(part => hash(part.toString("utf8"))), publicUrl: s.publicUrl, runtimeDir: s.runtimeDir, bun: s.bun, port: s.port }))
+    // The published catalog depends on the language-server setting, so a daemon
+    // started with a different one must not be reused for this connection.
+    const identity = hash(JSON.stringify({ code: parts.map(part => hash(part.toString("utf8"))), publicUrl: s.publicUrl, runtimeDir: s.runtimeDir, bun: s.bun, port: s.port, lsp: s.lsp }))
     const config: DaemonConfig = { mcpToken, controlToken, identity, port: s.port,
       bridge: { ...initialConfig, mcpToken, stateDir: join(directory, "execution") } }
     const file = join(directory, "daemon.json"), stored = await readJson<DaemonConfig | undefined>(file, undefined)

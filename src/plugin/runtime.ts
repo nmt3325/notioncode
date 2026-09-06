@@ -59,7 +59,8 @@ export async function startRuntime(directory: string, options: PluginOptions = {
     const config = loadConfig({ OPENCODE_MCP_ROOT: s.root, OPENCODE_MCP_RUNTIME_DIR: s.runtimeDir,
       OPENCODE_MCP_STATE_DIR: join(s.stateBase, "setup-worker"), OPENCODE_MCP_BUN: s.bun,
       OPENCODE_MCP_PORT: String(s.port),
-      OPENCODE_MCP_PERMISSIONS: JSON.stringify({ "*": "allow", read: "allow", glob: "allow", grep: "allow", edit: "allow", bash: "allow", webfetch: "allow", todowrite: "allow" }) })
+      OPENCODE_MCP_LSP: s.lsp ? "true" : "false",
+      OPENCODE_MCP_PERMISSIONS: JSON.stringify({ "*": "allow", read: "allow", glob: "allow", grep: "allow", edit: "allow", bash: "allow", webfetch: "allow", todowrite: "allow", lsp: "allow" }) })
     if (!await prepared(s.runtimeDir)) {
       if (!s.autoSetup) throw new Error("Native runtime needs setup; enable autoSetup or run npm run setup:native")
       const releaseSetup = await lockWithWait(join(s.stateBase, "setup", `${hash(s.runtimeDir)}.lock`), 16 * 60 * 1000)

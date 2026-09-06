@@ -17,11 +17,13 @@ import { ToolJsonSchema } from "@/tool/json-schema"
 import { ReadTool } from "@/tool/read"
 import { WriteTool } from "@/tool/write"
 import { EditTool } from "@/tool/edit"
+import { ApplyPatchTool } from "@/tool/apply_patch"
 import { GlobTool } from "@/tool/glob"
 import { GrepTool } from "@/tool/grep"
 import { ShellTool } from "@/tool/shell"
 import { WebFetchTool } from "@/tool/webfetch"
 import { TodoWriteTool } from "@/tool/todo"
+import { LspTool } from "@/tool/lsp"
 import { Truncate } from "@/tool/truncate"
 import { Agent } from "@/agent/agent"
 import { LSP } from "@/lsp/lsp"
@@ -59,7 +61,7 @@ const rules = Permission.merge(
   Permission.fromConfig({
     "*": "deny",
     read: { "*": "allow", "*.env": "ask", "*.env.*": "ask", "*.env.example": "allow" },
-    glob: "allow", grep: "allow", todowrite: "allow", edit: "ask", bash: "ask", webfetch: "ask",
+    glob: "allow", grep: "allow", todowrite: "allow", lsp: "allow", edit: "ask", bash: "ask", webfetch: "ask",
   }),
   Permission.fromConfig(options.permissions ?? {}),
   Permission.fromConfig({ external_directory: "deny", task: "deny", question: "deny" }),
@@ -129,13 +131,17 @@ const state = await runtime.runPromise(Effect.gen(function* () {
     const session = yield* sessions.create({ title: "MCP execution toolbox" })
     // The native event projector must have persisted the parent before TODO FK writes.
     yield* sessions.get(session.id)
-    const tools = yield* Effect.all([
+    const core = yield* Effect.all([
       ReadTool.pipe(Effect.flatMap(Tool.init)), WriteTool.pipe(Effect.flatMap(Tool.init)),
-      EditTool.pipe(Effect.flatMap(Tool.init)), GlobTool.pipe(Effect.flatMap(Tool.init)),
-      GrepTool.pipe(Effect.flatMap(Tool.init)), ShellTool.pipe(Effect.flatMap(Tool.init)),
-      WebFetchTool.pipe(Effect.flatMap(Tool.init)), TodoWriteTool.pipe(Effect.flatMap(Tool.init)),
+      EditTool.pipe(Effect.flatMap(Tool.init)), ApplyPatchTool.pipe(Effect.flatMap(Tool.init)),
+      GlobTool.pipe(Effect.flatMap(Tool.init)), GrepTool.pipe(Effect.flatMap(Tool.init)),
+      ShellTool.pipe(Effect.flatMap(Tool.init)), WebFetchTool.pipe(Effect.flatMap(Tool.init)),
+      TodoWriteTool.pipe(Effect.flatMap(Tool.init)),
     ])
-    return { instance, session, tools }
+    // Language-server operations need a real LSP context, so they are published
+    // only when one is configured; the catalog then reflects that capability.
+    const language = options.lsp ? [yield* LspTool.pipe(Effect.flatMap(Tool.init))] : []
+    return { instance, session, tools: [...core, ...language] }
   }))
 }).pipe(Effect.provideService(Scope.Scope, scope)))
 
@@ -144,7 +150,7 @@ const controllers = new Map<string, AbortController>()
 const tasks = new Set<Promise<unknown>>()
 const savedOutputs = new Set<string>()
 const approvals = new Map<string, { job: string; settle: (approved: boolean) => void }>()
-const allowedPermissionKinds = new Set(["read", "edit", "glob", "grep", "bash", "webfetch", "todowrite", "external_directory"])
+const allowedPermissionKinds = new Set(["read", "edit", "glob", "grep", "bash", "webfetch", "todowrite", "lsp", "external_directory"])
 
 function within(root: string, path: string): boolean {
   const diff = relative(root, path)

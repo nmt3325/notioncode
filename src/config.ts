@@ -32,7 +32,10 @@ export const UPSTREAM = {
   commit: "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
   bun: "1.3.14",
 } as const
-export const NATIVE_TOOL_IDS = ["read", "write", "edit", "glob", "grep", "bash", "webfetch", "todowrite"] as const
+// Every upstream tool this toolbox may publish. `lsp` is optional because the
+// language-server operations only exist when a real LSP context is enabled.
+export const NATIVE_TOOL_IDS = ["read", "write", "edit", "apply_patch", "glob", "grep", "bash", "webfetch", "todowrite", "lsp"] as const
+export const OPTIONAL_NATIVE_TOOL_IDS = ["lsp"] as const
 
 const action = z.enum(["allow", "ask", "deny"])
 const permissions = z.record(z.union([action, z.record(action)]))

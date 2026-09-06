@@ -135,7 +135,7 @@ npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.5.0.tgz
 
 ## 全許可モードと境界
 
-初期版は **全許可モード固定**。`read` / `write` / `edit` / `glob` / `grep` / `bash` / `webfetch` / `todowrite` が承認待ちなしで実行されます。MCP の bearer credential は token_v2 とは別に生成・保存します。Notion トークンやホストのモデル API キーを worker の環境には渡しません。
+初期版は **全許可モード固定**。`read` / `write` / `edit` / `apply_patch` / `glob` / `grep` / `bash` / `webfetch` / `todowrite` が承認待ちなしで実行されます。`lsp` は `OPENCODE_MCP_LSP`（プラグインオプション `lsp`）を有効にしたときだけ公開され、有効時は同じく承認待ちなしです。MCP の bearer credential は token_v2 とは別に生成・保存します。Notion トークンやホストのモデル API キーを worker の環境には渡しません。
 
 認証、ファイルツールのパスチェック、`external_directory` / `task` / `question` の拒否は維持します。ただし **シェルは OS のファイルシステム隔離ではありません**。全許可の bash は OS ユーザー権限で動きます。信頼できるプロジェクト、または専用コンテナ／VM で利用してください。
 
@@ -173,6 +173,7 @@ npm install --ignore-scripts --omit=dev /path/to/opencode-mcp-bridge-0.5.0.tgz
 | runtimeDir | OPENCODE_MCP_RUNTIME_DIR | stateDir/runtime/1.18.29 |
 | bun | OPENCODE_MCP_BUN | platform optional dependency |
 | port | OPENCODE_MCP_PORT | 8787 |
+| lsp | OPENCODE_MCP_LSP | false（true で native `lsp` ツールを公開） |
 | autoSetup | なし | true |
 | includeUnlistedModels | なし | false（通常非表示のカタログ項目も一覧に含める） |
 
