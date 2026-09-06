@@ -164,5 +164,5 @@ test("OpenCode definitions expose attachments and every registered Notion effort
     assert.deepEqual(Object.keys(definition.variants), efforts.supported, choice.notionModel)
     for (const effort of efforts.supported) assert.equal(definition.variants[effort].reasoningEffort, effort)
   }
-  assert.deepEqual(Object.keys(definitions["gpt-6-astra"].variants), ["none", "low", "medium", "high", "xhigh", "max"])
+  assert.deepEqual(Object.keys(definitions["gpt-6-astra"].variants), ["low", "medium", "high", "xhigh", "max"])
 })

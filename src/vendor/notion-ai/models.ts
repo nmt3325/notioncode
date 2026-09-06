@@ -222,7 +222,7 @@ export const MODEL_REASONING_EFFORTS: Record<string, ModelReasoningEfforts> = {
   "orange-mousse": { supported: NONE_TO_MAX, default: "medium" },
   "orchid-muffin": { supported: NONE_TO_MAX, default: "medium" },
   "olive-jellyroll": { supported: NONE_TO_MAX, default: "medium" },
-  "gpt-6-astra": { supported: NONE_TO_MAX, default: "medium" },
+  "gpt-6-astra": { supported: LOW_TO_XHIGH_MAX, default: "medium" },
   "almond-croissant-max": { supported: LOW_TO_MAX, default: "max" },
   "almond-croissant-high": { supported: LOW_TO_MAX, default: "high" },
   "almond-croissant-medium": { supported: LOW_TO_MAX, default: "medium" },
