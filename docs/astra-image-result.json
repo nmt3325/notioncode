@@ -1,0 +1,81 @@
+{
+  "nativeHost": "OpenCode 1.18.29 / Bun 1.3.14",
+  "model": "gpt-6-astra",
+  "effort": "high",
+  "readOnly": true,
+  "credentialsLogged": false,
+  "requests": [
+    {
+      "kind": "http",
+      "endpoint": "getUploadFileUrlForAssistantChatTranscriptUpload",
+      "status": 200
+    },
+    {
+      "kind": "http",
+      "endpoint": "signedUpload",
+      "status": 204
+    },
+    {
+      "kind": "http",
+      "endpoint": "processAgentAttachment",
+      "status": 200
+    },
+    {
+      "kind": "http",
+      "endpoint": "syncRecordValuesMain",
+      "status": 200
+    },
+    {
+      "kind": "http",
+      "endpoint": "syncRecordValuesMain",
+      "status": 200
+    },
+    {
+      "kind": "http",
+      "endpoint": "runInferenceTranscript",
+      "status": 200
+    }
+  ],
+  "uploads": [
+    {
+      "kind": "upload",
+      "extension": "png",
+      "contentType": "image/png",
+      "contentLength": 5189
+    }
+  ],
+  "errors": [],
+  "sdk": {
+    "kind": "sdk",
+    "model": "gpt-6-astra",
+    "effort": "high"
+  },
+  "request": {
+    "kind": "request",
+    "model": "GPT-6 Astra",
+    "modelMatches": true,
+    "effort": "high",
+    "attachments": 1
+  },
+  "reported": [
+    {
+      "kind": "reported",
+      "source": "agent-inference",
+      "model": "GPT-6 Astra",
+      "modelMatches": true
+    },
+    {
+      "kind": "reported",
+      "source": "config",
+      "model": "GPT-6 Astra",
+      "modelMatches": true,
+      "effort": "high"
+    }
+  ],
+  "imageResult": {
+    "code": "37E85015",
+    "blueCircles": 3,
+    "redSquares": 1
+  },
+  "status": "passed-native-model-effort-image"
+}

@@ -46,14 +46,15 @@ test("advanced catalog includes every callable entry without changing existing p
   for (const entry of regular.choices) assert.deepEqual(all.choices.find(item => item.id === entry.id), entry)
   for (const entry of all.choices) assert.equal(all.resolve(entry.id), entry.notionModel)
 })
-test("GPT-6 Astra is exposed under the production provider identifier", () => {
+test("GPT-6 Astra public key resolves to the workflow routing identifier", () => {
   const models = new NotionModels()
   const astra = models.choices.find(entry => entry.id === "gpt-6-astra")
   assert.ok(astra)
   assert.equal(astra.name, "GPT-6 Astra")
-  assert.equal(astra.notionModel, "gpt-6-astra")
-  assert.equal(models.resolve("gpt-6-astra"), "gpt-6-astra")
-  assert.equal(normalizeModelName("gpt-6", "default"), "gpt-6-astra")
+  assert.equal(astra.notionModel, "orlando-quinn")
+  assert.equal(models.resolve("gpt-6-astra"), "orlando-quinn")
+  assert.equal(normalizeModelName("gpt-6", "default"), "orlando-quinn")
+  assert.equal(normalizeModelName("gpt-6-astra", "default"), "orlando-quinn")
 })
 test("configured default is explicit and does not force named selections to Sonnet", async t => {
   const models = new NotionModels("gpt-5.4"), f = await fixture(t, models)
@@ -117,12 +118,12 @@ test("named models also keep auxiliary requests local", async t => {
   for (const agent of ["title", "summary", "compaction"]) assert.equal((await request(f.transport, model, "msg_aux", { agent })).status, 200)
   assert.equal(f.calls.length, 0)
 })
-test("version-1 journals without model information remain readable and never replay", async t => {
+test("legacy journals remain readable but changed effective selections never replay or resend", async t => {
   const f = await fixture(t), id = randomUUID()
   await saveJson(f.journal.path, { version: 1, sessions: { ses_models: { conversationId: id, turns: { msg_1: { conversationId: id, promptHash: hash("hello"), status: "complete", text: "legacy" } } } } })
   await f.journal.load()
   const response = await request(f.transport)
-  assert.equal((await response.json()).choices[0].message.content, "legacy"); assert.equal(f.calls.length, 0)
+  assert.equal(response.status, 400); assert.match(await response.text(), /different content/); assert.equal(f.calls.length, 0)
 })
 test("corrupt persisted model values fail closed", async t => {
   const f = await fixture(t); await request(f.transport)

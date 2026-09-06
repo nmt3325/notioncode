@@ -41,7 +41,7 @@ export const MODEL_CATALOG: ModelInfo[] = [
   { modelId: "orange-mousse", displayName: "GPT-5.6 Sol", displayNameWithProvider: "OpenAI GPT-5.6 Sol", family: "openai", group: "intelligent", pickable: true },
   { modelId: "orchid-muffin", displayName: "GPT-5.6 Terra", displayNameWithProvider: "OpenAI GPT-5.6 Terra", family: "openai", group: "intelligent", pickable: true },
   { modelId: "olive-jellyroll", displayName: "GPT-5.6 Luna", displayNameWithProvider: "OpenAI GPT-5.6 Luna", family: "openai", group: "fast", pickable: true },
-  { modelId: "gpt-6-astra", displayName: "GPT-6 Astra", displayNameWithProvider: "OpenAI GPT-6 Astra", family: "openai", group: "intelligent", pickable: true },
+  { modelId: "orlando-quinn", displayName: "GPT-6 Astra", displayNameWithProvider: "OpenAI GPT-6 Astra", family: "openai", group: "intelligent", pickable: true },
   { modelId: "anthropic-sonnet-4", displayName: "Claude 4 Sonnet", displayNameWithProvider: "Anthropic Claude 4 Sonnet", family: "anthropic", group: "fast", pickable: false },
   { modelId: "anthropic-sonnet-3.7", displayName: "Claude 3.7 Sonnet", displayNameWithProvider: "Anthropic Claude 3.7 Sonnet", family: "anthropic", group: "intelligent", pickable: true },
   { modelId: "anthropic-sonnet-3.7-thinking", displayName: "Claude 3.7 Sonnet with thinking", displayNameWithProvider: "Anthropic Claude 3.7 Sonnet with thinking", family: "anthropic", group: "intelligent", pickable: false },
@@ -108,7 +108,8 @@ export const BUILTIN_ALIASES: Record<string, string> = {
   "claude-sonnet-4.6": "almond-croissant-low",
   "gpt-5.2": "oatmeal-cookie",
   "gpt-5.4": "oval-kumquat-medium",
-  "gpt-6": "gpt-6-astra",
+  "gpt-6": "orlando-quinn",
+  "gpt-6-astra": "orlando-quinn",
   "gemini-2.5-flash": "vertex-gemini-2.5-flash",
   "gemini-3-flash": "gingerbread"
 };
@@ -199,6 +200,8 @@ const NONE_TO_MAX: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh"
  * web bundle model registry. Models missing here render no effort picker in the Notion UI.
  */
 export const MODEL_REASONING_EFFORTS: Record<string, ModelReasoningEfforts> = {
+  // Verified against the workflow registry and live inference metadata on 2026-09-06.
+  "orlando-quinn": { supported: ["low", "medium", "high", "xhigh", "max"], default: "medium" },
   "opal-quince": { supported: MEDIUM_HIGH, default: "medium" },
   "opal-quince-medium": { supported: MEDIUM_HIGH, default: "medium" },
   "opal-quince-high": { supported: MEDIUM_HIGH, default: "high" },

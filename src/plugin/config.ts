@@ -3,11 +3,13 @@ import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { createRequire } from "node:module"
 import { hash } from "./storage.js"
+import { resolveReasoningEffort } from "./effort.js"
+import { normalizeModelName } from "../vendor/notion-ai/models.js"
 import { UPSTREAM } from "../config.js"
-export interface PluginOptions { publicUrl?: string; accountFile?: string; spaceId?: string; model?: string; stateDir?: string; runtimeDir?: string; bun?: string; port?: number; autoSetup?: boolean; includeUnlistedModels?: boolean }
+export interface PluginOptions { publicUrl?: string; accountFile?: string; spaceId?: string; model?: string; reasoningEffort?: string; stateDir?: string; runtimeDir?: string; bun?: string; port?: number; autoSetup?: boolean; includeUnlistedModels?: boolean }
 export interface Settings {
   root: string; publicUrl: string; tokenV2: string; account: Record<string, string>
-  model: string; stateBase: string; runtimeDir: string; bun: string; port: number
+  model: string; reasoningEffort?: string; stateBase: string; runtimeDir: string; bun: string; port: number
   autoSetup: boolean; includeUnlistedModels: boolean; connectionName: string
 }
 export function outside(root: string, target: string): boolean {
@@ -51,8 +53,10 @@ export async function settings(directory: string, options: PluginOptions = {}, e
   if (!outside(root, stateBase) || !outside(root, runtimeDir)) throw new Error("Plugin state and runtime must be outside the editable workspace")
   const port = options.port ?? Number(env.OPENCODE_MCP_PORT ?? 8787)
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("MCP port must be between 1 and 65535")
-  return { root, publicUrl: url.href, tokenV2, account, stateBase, runtimeDir,
-    model: options.model ?? env.NOTION_DEFAULT_MODEL ?? "default",
+  const model = options.model ?? env.NOTION_DEFAULT_MODEL ?? "default"
+  const reasoningEffort = resolveReasoningEffort(normalizeModelName(model, "default"), options.reasoningEffort !== undefined ? options.reasoningEffort : env.NOTION_REASONING_EFFORT)
+  return { root, publicUrl: url.href, tokenV2, account, stateBase, runtimeDir, model,
+    ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
     bun: options.bun ?? env.OPENCODE_MCP_BUN ?? bundledBun(), port, autoSetup: options.autoSetup !== false, includeUnlistedModels: options.includeUnlistedModels === true,
     connectionName: `OpenCode ${basename(root)} [${hash(root).slice(0, 10)}]` }
 }
