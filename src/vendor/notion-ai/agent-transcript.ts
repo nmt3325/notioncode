@@ -220,3 +220,8 @@ export function isAgentTranscriptTurnComplete(state: AgentTranscriptState): bool
   const completionSequence = number(entities.filter((entity) => entity.kind === "turn_completed").at(-1)?.sequence);
   return completionSequence > 0 && completionSequence >= assistantSequence;
 }
+
+/** Public assistant messages in the current polled turn, including commentary. */
+export function agentTranscriptVisibleText(state: AgentTranscriptState): string {
+  return orderedEntities(state).filter(entity => entity.kind === "assistant_message").map(entityText).filter(Boolean).join("\n\n");
+}

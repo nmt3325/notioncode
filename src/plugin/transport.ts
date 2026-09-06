@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto"
 import { Journal, hash } from "./storage.js"
 import type { ChatBackend } from "./notion.js"
+import type { ExecutionEvent } from "../opencodeClient.js"
+import { isTerminal } from "../protocol.js"
+import type { LiveDisplay, TurnDisplay } from "./live.js"
+import type { Redactor } from "./redact.js"
 export const PROVIDER = "notion-ai"
 export const CHAT_MODEL = "chat"
 export const META_MODEL = "metadata"
@@ -21,12 +25,23 @@ function responseError(message: string, status = 400): Response {
   return Response.json({ error: { message, type: "notion_plugin_error" } }, { status })
 }
 export class NotionTransport {
-  private busy?: { session: string; message: string; promise: Promise<string>; controller: AbortController }
+  private busy?: { session: string; message: string; promise: Promise<string>; controller: AbortController;
+    listeners: Set<(text: string) => void>; snapshot: () => string | undefined }
+  display?: LiveDisplay
+  private displayTurn?: TurnDisplay
+  private displayJobs = new Map<string, TurnDisplay>()
+  get redactDisplay(): Redactor { return this.redact }
+  observeExecution(event: ExecutionEvent): void {
+    if (event.type === "start" && this.displayTurn) this.displayJobs.set(event.job.job_id, this.displayTurn)
+    const display = this.displayJobs.get(event.job.job_id)
+    display?.update(event)
+    if (isTerminal(event.job.status)) this.displayJobs.delete(event.job.job_id)
+  }
   private closed = false
   constructor(private readonly backend: ChatBackend, readonly journal: Journal,
-    private readonly context: string, private readonly redact: (text: string) => string = text => text,
+    private readonly context: string, private readonly redact: Redactor = text => text,
     private readonly cancelTools: () => Promise<void> = async () => {}) {}
-  private async turn(session: string, message: string, prompt: string, signal: AbortSignal): Promise<string> {
+  private async turn(session: string, message: string, prompt: string, signal: AbortSignal, onText?: (text: string) => void): Promise<string> {
     if (this.closed) throw new Error("Plugin is shutting down")
     signal.throwIfAborted()
     const promptHash = hash(prompt)
@@ -34,18 +49,29 @@ export class NotionTransport {
     if (known && known.promptHash !== promptHash) throw new Error("Message ID was reused with different content; start a new message")
     if (known?.status === "complete") return known.text ?? ""
     if (this.busy) {
-      if (this.busy.session === session && this.busy.message === message) return this.busy.promise
+      if (this.busy.session === session && this.busy.message === message) {
+        const busy = this.busy
+        if (onText) { busy.listeners.add(onText); const text = busy.snapshot(); if (text !== undefined) onText(text) }
+        try { return await busy.promise } finally { if (onText) busy.listeners.delete(onText) }
+      }
       throw new Error("Another Notion turn is active in this workspace. Wait for it to finish or stop it before sending another message")
     }
     if (known) throw new Error("This message was already dispatched. Its result is uncertain or it was interrupted; it will not be automatically resent. Inspect the Notion conversation, then send a new message")
     const controller = new AbortController()
     const combined = AbortSignal.any([signal, controller.signal])
     // Reserve synchronously, before any persistence or network await.
-    const promise = this.execute(session, message, prompt, promptHash, combined)
-    const busy = { session, message, promise, controller }; this.busy = busy
+    const listeners = new Set<(text: string) => void>(); if (onText) listeners.add(onText)
+    let latest: string | undefined
+    const publish = (text: string) => {
+      if (combined.aborted) return
+      latest = text
+      for (const listener of listeners) listener(text)
+    }
+    const promise = this.execute(session, message, prompt, promptHash, combined, publish)
+    const busy = { session, message, promise, controller, listeners, snapshot: () => latest }; this.busy = busy
     try { return await promise } finally { if (this.busy === busy) this.busy = undefined }
   }
-  private async execute(session: string, message: string, prompt: string, promptHash: string, signal: AbortSignal): Promise<string> {
+  private async execute(session: string, message: string, prompt: string, promptHash: string, signal: AbortSignal, onText: (text: string) => void): Promise<string> {
     let conversation = this.journal.data.sessions[session]
     const fresh = !conversation
     if (!conversation) { conversation = { conversationId: randomUUID(), turns: {} }; this.journal.data.sessions[session] = conversation }
@@ -53,9 +79,15 @@ export class NotionTransport {
     conversation.turns[message] = turn
     // Durable intent precedes side effects. A retry never re-executes a turn.
     await this.journal.save()
+    let display: TurnDisplay | undefined
     try {
-      const text = await this.backend.send({ prompt: fresh ? `${this.context}\n\n${prompt}` : prompt,
-        conversationId: conversation.conversationId, fresh, signal })
+      display = await this.display?.begin(session, message); this.displayTurn = display
+      signal.throwIfAborted()
+      const raw = await this.backend.send({ prompt: fresh ? `${this.context}\n\n${prompt}` : prompt,
+        conversationId: conversation.conversationId, fresh, signal, onText })
+      signal.throwIfAborted()
+      const text = this.redact(raw)
+      display?.finalText(text); await display?.flush()
       conversation.turns[message] = { ...turn, status: "complete", text }
       await this.journal.save(); return text
     } catch (error) {
@@ -63,7 +95,7 @@ export class NotionTransport {
       try { await this.journal.save() }
       finally { if (signal.aborted) await Promise.allSettled([this.backend.interrupt(conversation.conversationId), this.cancelTools()]) }
       throw error
-    }
+    } finally { if (this.displayTurn === display) this.displayTurn = undefined }
   }
   fetch: typeof fetch = async (input, init) => {
     let request: Request
@@ -80,14 +112,14 @@ export class NotionTransport {
       if (!auxiliary && (!valid(session) || !valid(message))) return responseError("OpenCode session/message headers are missing or invalid. Use the supported plugin and OpenCode version")
       const abort = new AbortController(); const signal = AbortSignal.any([request.signal, abort.signal])
       // Metadata stays local, even if OpenCode explicitly uses the main model.
-      const run = () => auxiliary ? Promise.resolve(prompt.trim().split(/\n/)[0].slice(0, 72) || "Notion conversation") : this.turn(session, message, prompt, signal)
+      const run = (onText?: (text: string) => void) => auxiliary ? Promise.resolve(prompt.trim().split(/\n/)[0].slice(0, 72) || "Notion conversation") : this.turn(session, message, prompt, signal, onText)
       if (!body.stream) {
-        const text = await run()
+        const text = this.redact(await run())
         return Response.json({ id: `chatcmpl-${randomUUID()}`, object: "chat.completion", created: Math.floor(Date.now()/1000), model: body.model,
           choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }] })
       }
       const id = `chatcmpl-${randomUUID()}`, created = Math.floor(Date.now()/1000), encode = new TextEncoder(), self = this
-      let heartbeat: ReturnType<typeof setInterval> | undefined, ended = false
+      let heartbeat: ReturnType<typeof setInterval> | undefined, ended = false, emitted = "", revised = false
       let controller: ReadableStreamDefaultController<Uint8Array>
       const send = (value: unknown) => { if (!ended) controller.enqueue(encode.encode(`data: ${JSON.stringify(value)}\n\n`)) }
       const chunk = (delta: Record<string, unknown>, finish: string | null = null) => ({ id, object: "chat.completion.chunk", created, model: body.model, choices: [{ index: 0, delta, finish_reason: finish }] })
@@ -95,10 +127,21 @@ export class NotionTransport {
         start(c) {
           controller = c; send(chunk({ role: "assistant", content: "" }))
           heartbeat = setInterval(() => { if (!ended) c.enqueue(encode.encode(": waiting for Notion\n\n")) }, 10000)
-          void run().then(text => {
-            send(chunk({ content: text })); send(chunk({}, "stop"))
+          const snapshot = (text: string, final = false) => {
+            if (ended) return
+            const safe = self.redact.stream?.(text, final) ?? self.redact(text)
+            if (safe.startsWith(emitted) && !revised) {
+              const delta = safe.slice(emitted.length); emitted = safe
+              if (delta) send(chunk({ content: delta }))
+            } else if (!emitted.startsWith(safe) || (final && safe !== emitted)) revised = true
+            // SSE is append-only. The standard text.complete hook reconciles a
+            // genuine upstream revision, without duplicating it as another answer.
+            if (final && revised && !self.display) throw new Error("Notion revised previously streamed text; use the supported OpenCode live UI or retrieve the completed response without streaming")
+          }
+          void run(text => snapshot(text)).then(text => {
+            snapshot(text, true); send(chunk({}, "stop"))
             if (!ended) { c.enqueue(encode.encode("data: [DONE]\n\n")); ended = true; c.close() }
-          }, error => {
+          }).catch(error => {
             send({ error: { message: self.redact(error instanceof Error ? error.message : String(error)), type: "notion_plugin_error" } })
             if (!ended) { ended = true; c.close() }
           }).finally(() => clearInterval(heartbeat))

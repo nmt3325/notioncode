@@ -1,5 +1,6 @@
 import type { Plugin, PluginModule, Hooks } from "@opencode-ai/plugin"
 import { startRuntime } from "./plugin/runtime.js"
+import { attachLiveUI } from "./plugin/live.js"
 import type { PluginOptions } from "./plugin/config.js"
 import { AGENT_HEADER, CHAT_MODEL, MESSAGE_HEADER, META_MODEL, PROVIDER, SESSION_HEADER, type NotionTransport } from "./plugin/transport.js"
 // Separated from startup so the real hooks can be tested with a mock backend.
@@ -33,7 +34,8 @@ export function providerHooks(transport: Pick<NotionTransport, "fetch">, close: 
 const server: Plugin = async (input, options) => {
   try {
     const runtime = await startRuntime(input.directory, (options ?? {}) as PluginOptions)
-    return providerHooks(runtime.transport, runtime.close)
+    try { return attachLiveUI(input, runtime.transport, providerHooks(runtime.transport, runtime.close)) }
+    catch (error) { await runtime.close(); throw error }
   } catch (error) {
     // Keep Notion selected on failure; never silently execute with a local LLM.
     const message = error instanceof Error ? error.message : "Notion plugin setup failed"

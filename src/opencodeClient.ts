@@ -10,6 +10,7 @@ import { isTerminal, type JobView, type NativeTool } from "./protocol.js"
 
 const run = promisify(execFile)
 const FRAME_LIMIT = 16 * 1024 * 1024
+export interface ExecutionEvent { type: "start" | "update"; job: JobView; input?: Record<string, unknown> }
 interface Job extends JobView { timer?: NodeJS.Timeout; cancelReason?: string; bytes: number }
 function inside(root: string, target: string): boolean {
   const path = relative(root, target)
@@ -24,6 +25,16 @@ export class OpencodeClient {
   private catalog: NativeTool[] = []
   private jobs = new Map<string, Job>()
   private changed = new EventEmitter()
+  private observers = new Set<(event: ExecutionEvent) => void>()
+  observe(listener: (event: ExecutionEvent) => void): () => void {
+    this.observers.add(listener); return () => { this.observers.delete(listener) }
+  }
+  private notify(id: string, input?: Record<string, unknown>): void {
+    this.changed.emit(id)
+    if (!this.observers.size) return
+    const event: ExecutionEvent = { type: input ? "start" : "update", job: this.snapshot(id), ...(input ? { input } : {}) }
+    for (const observer of this.observers) { try { observer(structuredClone(event)) } catch { /* display cannot fail execution */ } }
+  }
   private acknowledgements = new Map<string, { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>()
   private fatal?: Error
   private started = false
@@ -118,7 +129,7 @@ export class OpencodeClient {
       clearTimeout(job.timer)
     } else throw new Error("Unknown native response type")
     job.bytes = Buffer.byteLength(JSON.stringify(this.snapshot(job.job_id)))
-    this.changed.emit(job.job_id)
+    this.notify(job.job_id)
     this.prune(job.job_id)
   }
   private send(value: unknown): void {
@@ -134,7 +145,7 @@ export class OpencodeClient {
     this.readyReject?.(error)
     for (const job of this.jobs.values()) if (!isTerminal(job.status)) {
       job.status = "failed"; job.error = error.message; job.permission = undefined
-      clearTimeout(job.timer); this.changed.emit(job.job_id)
+      clearTimeout(job.timer); this.notify(job.job_id)
     }
     for (const item of this.acknowledgements.values()) { clearTimeout(item.timer); item.reject(error) }
     this.acknowledgements.clear()
@@ -186,6 +197,7 @@ export class OpencodeClient {
     job.timer = setTimeout(() => { this.cancel(id, "Execution deadline reached; cancellation does not undo completed writes") }, this.config.jobTimeoutMs)
     try { this.send({ type: "execute", id, tool, args }) }
     catch (error) { clearTimeout(job.timer); this.jobs.delete(id); throw error }
+    this.notify(id, args)
     return id
   }
   wait(id: string, waitMs: number): Promise<JobView> {
@@ -204,7 +216,7 @@ export class OpencodeClient {
       job.cancelReason = reason; job.status = "cancelling"; job.permission = undefined
       try { this.send({ type: "cancel", id }) }
       catch (error) { this.fail(error instanceof Error ? error : new Error(String(error))) }
-      this.changed.emit(id)
+      this.notify(id)
     }
     return this.snapshot(id)
   }
@@ -221,7 +233,7 @@ export class OpencodeClient {
     // ACK may share a frame with completion or a newer permission request.
     if (job.status === "awaiting_permission" && job.permission?.id === permissionId) {
       job.permission = undefined; job.status = "running"
-      this.changed.emit(id)
+      this.notify(id)
     }
   }
   async stop(): Promise<void> {
