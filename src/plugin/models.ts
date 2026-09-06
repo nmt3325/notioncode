@@ -53,7 +53,7 @@ export class NotionModels {
     const limits = { context: UNKNOWN_NOTION_CONTEXT, output: 0 }
     const chat = (name: string, notionModel?: string) => {
       const efforts = notionModel ? modelReasoningEfforts(notionModel) : undefined
-      return { name, tool_call: false, attachment: true, reasoning: Boolean(efforts), limit: { ...limits },
+      return { name, tool_call: false, attachment: true, modalities: { input: ["text" as const, "image" as const, "pdf" as const], output: ["text" as const] }, reasoning: Boolean(efforts), limit: { ...limits },
         ...(efforts ? { variants: Object.fromEntries(efforts.supported.map(effort => [effort, { reasoningEffort: effort }])) } : {}) }
     }
     return {

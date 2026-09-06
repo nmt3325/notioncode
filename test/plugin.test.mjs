@@ -34,7 +34,7 @@ test("standard provider hooks retain UI and isolate execution", async t => {
   assert.equal(config.provider.existing.name, "Keep"); assert.equal(config.model, "notion-ai/chat"); assert.equal(config.default_agent, "notion")
   assert.equal(config.small_model, "notion-ai/metadata"); assert.equal(config.compaction.auto, false)
   assert.equal(config.provider["notion-ai"].options.fetch, f.transport.fetch)
-  assert.equal(config.provider["notion-ai"].models.chat.tool_call, false); assert.equal(config.provider["notion-ai"].models.chat.attachment, true); assert.equal(config.agent.notion.tools["*"], false)
+  assert.equal(config.provider["notion-ai"].models.chat.tool_call, false); assert.equal(config.provider["notion-ai"].models.chat.attachment, true); assert.deepEqual(config.provider["notion-ai"].models.chat.modalities, { input: ["text", "image", "pdf"], output: ["text"] }); assert.equal(config.agent.notion.tools["*"], false)
   assert.ok(!JSON.stringify(config).includes("token_v2"))
   const output = { headers: {} }
   await hooks["chat.headers"]({ model: { providerID: "notion-ai" }, sessionID: "ses_1", agent: "notion", message: { id: "msg_1" } }, output)

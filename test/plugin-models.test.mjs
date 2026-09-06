@@ -154,6 +154,7 @@ test("every selectable model reaches the real Notion client transcript configura
 test("OpenCode definitions expose attachments and Notion effort variants",()=>{
   const definitions=new NotionModels().definitions()
   assert.equal(definitions["gpt-5.2"].attachment,true)
+  assert.deepEqual(definitions["gpt-5.2"].modalities,{input:["text","image","pdf"],output:["text"]})
   assert.equal(definitions["gpt-5.2"].reasoning,true)
   assert.equal(definitions["gpt-5.2"].variants.high.reasoningEffort,"high")
 })

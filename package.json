@@ -1,6 +1,6 @@
 {
   "name": "opencode-mcp-bridge",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "OpenCode standard-chat Notion AI provider with an automatically managed execution MCP toolbox",
   "license": "MIT",
   "type": "module",
